@@ -197,7 +197,7 @@ export default function DriverApplications() {
                     </td>
                     <td className="py-3 px-3 text-right">
                       <Button size="xs" onClick={() => handleReview(app)}>
-                        Review Dossier
+                        Review Application
                       </Button>
                     </td>
                   </tr>
@@ -215,12 +215,12 @@ export default function DriverApplications() {
         )}
       </div>
 
-      {/* Review Dossier Modal */}
+      {/* Review Application Modal */}
       {selectedApp && (
         <Modal
           open={!!selectedApp}
           onClose={() => (submitting ? undefined : setSelectedApp(null))}
-          title={`Application Dossier: ${selectedApp.name}`}
+          title={`Driver Application: ${selectedApp.name}`}
           footer={
             <div className="flex flex-col sm:flex-row items-center gap-2 justify-end w-full">
               <Button

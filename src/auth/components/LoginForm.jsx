@@ -9,13 +9,21 @@ import Button from '@/shared/components/Button'
 export default function LoginForm() {
   const navigate = useNavigate()
   const { signIn } = useAuth()
-  const [role, setRole] = useState(ALL_ROLES[0])
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const [role, setRole] = useState(ROLES.DISPATCHER)
+  const [email, setEmail] = useState('test2@yopmail.com')
+  const [password, setPassword] = useState('nDNRinSJ@9')
   const [showPassword, setShowPassword] = useState(false)
   const [rememberMe, setRememberMe] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  function handleRoleChange(r) {
+    setRole(r)
+    if (r === ROLES.DISPATCHER && (!email || email === 'admin@carline.com')) {
+      setEmail('test2@yopmail.com')
+      setPassword('nDNRinSJ@9')
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -40,18 +48,18 @@ export default function LoginForm() {
     <form onSubmit={handleSubmit} className="w-full space-y-4">
       {/* Role Selection Pills */}
       <div>
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-2">
           {ALL_ROLES.map((r) => (
             <button
               type="button"
               key={r}
-              onClick={() => setRole(r)}
+              onClick={() => handleRoleChange(r)}
               title={ROLE_DESCRIPTIONS[r]}
               className={
-                'rounded-lg px-2.5 py-1 text-xs font-medium transition-all duration-150 ' +
+                'rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-150 cursor-pointer active:scale-95 ' +
                 (role === r
-                  ? 'bg-taxi-500 text-white shadow-sm font-semibold'
-                  : 'bg-surface text-text-secondary hover:bg-surface-raised border border-border-subtle')
+                  ? 'bg-taxi-500 text-white shadow-xs font-bold'
+                  : 'bg-surface text-text-secondary hover:bg-surface-hover hover:text-text-primary border border-border-subtle shadow-xs')
               }
             >
               {ROLE_LABELS[r]}

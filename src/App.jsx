@@ -1,6 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { PermissionProvider } from '@/access/PermissionContext'
-import { NotificationProvider } from '@/context/NotificationContext'
 import ProtectedRoute from '@/access/ProtectedRoute'
 import AdminLayout from '@/layouts/AdminLayout'
 import Login from '@/auth/pages/Login'
@@ -42,32 +41,30 @@ export default function App() {
   return (
     <BrowserRouter>
       <PermissionProvider>
-        <NotificationProvider>
-          <Routes>
-            <Route path="/" element={<RootRedirect />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Routes>
+          <Route path="/" element={<RootRedirect />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
 
-            {Object.entries(ROLE_ROUTE_TABLES).map(([roleSlug, routeTable]) => (
-              <Route
-                key={roleSlug}
-                path={`/${roleSlug}`}
-                element={
-                  <ProtectedRoute roleSlug={roleSlug}>
-                    <AdminLayout />
-                  </ProtectedRoute>
-                }
-              >
-                <Route index element={<Navigate to="dashboard" replace />} />
-                {routeTable.map((r) => (
-                  <Route key={r.path} path={r.path} element={r.element} />
-                ))}
-              </Route>
-            ))}
+          {Object.entries(ROLE_ROUTE_TABLES).map(([roleSlug, routeTable]) => (
+            <Route
+              key={roleSlug}
+              path={`/${roleSlug}`}
+              element={
+                <ProtectedRoute roleSlug={roleSlug}>
+                  <AdminLayout />
+                </ProtectedRoute>
+              }
+            >
+              <Route index element={<Navigate to="dashboard" replace />} />
+              {routeTable.map((r) => (
+                <Route key={r.path} path={r.path} element={r.element} />
+              ))}
+            </Route>
+          ))}
 
-            <Route path="*" element={<RootRedirect />} />
-          </Routes>
-        </NotificationProvider>
+          <Route path="*" element={<RootRedirect />} />
+        </Routes>
       </PermissionProvider>
     </BrowserRouter>
   )

@@ -1,131 +1,85 @@
 import { io } from 'socket.io-client'
 import { useAuthStore } from '@/store/authStore'
 
-let socketInstance = null
-const listeners = new Map()
-
-export function getSocketBaseUrl() {
-  const envUrl = import.meta.env.VITE_SOCKET_URL
-  if (envUrl && envUrl.trim()) {
-    return envUrl.trim().replace(/\/+$/, '')
-  }
-  const apiBase = (import.meta.env.VITE_API_BASE_URL || 'https://node.aitechnotech.in/carlinee/api/v1').trim()
-  return apiBase.replace(/\/api\/v1\/?$/, '')
-}
-
-export function getSocketPath() {
-  const envPath = import.meta.env.VITE_SOCKET_PATH
-  if (envPath && envPath.trim()) {
-    return envPath.trim()
-  }
-  const apiBase = (import.meta.env.VITE_API_BASE_URL || '').trim()
-  if (apiBase.includes('node.aitechnotech.in')) {
-    return '/viamo/socket.io'
-  }
-  return '/socket.io'
-}
+let socket = null
 
 export const socketClient = {
+  getSocket() {
+    return socket
+  },
+
   connect() {
     const token = useAuthStore.getState().token
-    if (!token) {
-      this.disconnect()
-      return null
+    const user = useAuthStore.getState().user
+    const role = useAuthStore.getState().role
+
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'https://node.aitechnotech.in/carlinee/api/v1'
+    const socketHost = baseUrl.replace(/\/api\/v1\/?$/, '').replace(/\/carlinee\/?$/, '')
+
+    if (socket && socket.connected) {
+      return socket
     }
 
-    if (socketInstance && socketInstance.connected) {
-      return socketInstance
+    if (socket) {
+      socket.disconnect()
     }
 
-    if (socketInstance) {
-      socketInstance.disconnect()
-      socketInstance = null
-    }
+    socket = io(socketHost, {
+      path: '/viamo/socket.io',
+      auth: { token },
+      query: {
+        token: token || '',
+        userId: user?._id || user?.id || '',
+        role: role || '',
+      },
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 20,
+      reconnectionDelay: 2000,
+    })
 
-    const socketUrl = getSocketBaseUrl()
-    const socketPath = getSocketPath()
+    socket.on('connect', () => {
+      console.log('[socket] Connected to server, id:', socket.id)
+      const u = useAuthStore.getState().user
+      const companyId = u?.companyId || u?.company?._id || u?.company
+      if (companyId) {
+        socket.emit('joinCompanyRoom', { companyId })
+      }
+      if (u?._id || u?.id) {
+        socket.emit('joinUserRoom', { userId: u._id || u.id })
+      }
+    })
 
-    try {
-      socketInstance = io(socketUrl, {
-        path: socketPath,
-        auth: { token },
-        transports: ['websocket', 'polling'],
-        reconnection: true,
-        reconnectionAttempts: 15,
-        reconnectionDelay: 2000,
-        timeout: 10000,
-      })
+    socket.on('disconnect', (reason) => {
+      console.log('[socket] Disconnected:', reason)
+    })
 
-      socketInstance.on('connect', () => {
-        // Re-attach registered listeners
-        for (const [event, callbacks] of listeners.entries()) {
-          for (const cb of callbacks) {
-            socketInstance.off(event, cb)
-            socketInstance.on(event, cb)
-          }
-        }
-      })
+    socket.on('connect_error', (err) => {
+      console.warn('[socket] Connection error:', err.message)
+    })
 
-      socketInstance.on('connect_error', (err) => {
-        console.debug('[socketClient] Connection error:', err?.message)
-      })
-
-      return socketInstance
-    } catch (err) {
-      console.warn('[socketClient] Failed to initialize socket:', err)
-      return null
-    }
+    return socket
   },
 
   disconnect() {
-    if (socketInstance) {
-      socketInstance.disconnect()
-      socketInstance = null
+    if (socket) {
+      socket.disconnect()
+      socket = null
     }
   },
 
   on(event, callback) {
-    if (!event || typeof callback !== 'function') return
-
-    if (!listeners.has(event)) {
-      listeners.set(event, new Set())
-    }
-    listeners.get(event).add(callback)
-
-    if (socketInstance) {
-      socketInstance.on(event, callback)
-    }
+    if (!socket) this.connect()
+    socket?.on(event, callback)
+    return () => socket?.off(event, callback)
   },
 
   off(event, callback) {
-    if (!event) return
-
-    if (callback && listeners.has(event)) {
-      listeners.get(event).delete(callback)
-    } else {
-      listeners.delete(event)
-    }
-
-    if (socketInstance) {
-      if (callback) {
-        socketInstance.off(event, callback)
-      } else {
-        socketInstance.off(event)
-      }
-    }
+    socket?.off(event, callback)
   },
 
   emit(event, data) {
-    if (socketInstance && socketInstance.connected) {
-      socketInstance.emit(event, data)
-    }
-  },
-
-  getSocket() {
-    return socketInstance
-  },
-
-  isConnected() {
-    return Boolean(socketInstance && socketInstance.connected)
+    if (!socket) this.connect()
+    socket?.emit(event, data)
   },
 }

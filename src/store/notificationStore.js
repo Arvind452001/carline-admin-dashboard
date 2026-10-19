@@ -1,238 +1,185 @@
 import { create } from 'zustand'
-import { notificationService } from '@/shared/services/notificationService'
-import { normalizeNotification } from '@/shared/utils/notificationUtils'
-import { playNotificationChime } from '@/shared/services/notificationAudio'
-import { initFirebaseMessaging } from '@/shared/services/firebaseMessaging'
+import { mockNotifications } from '@/shared/utils/mockData'
+import { notificationApi, normalizeNotification } from '@/shared/services/notificationApi'
+import { playNotificationSound } from '@/shared/utils/sound'
 
-function parseUnreadCount(res) {
-  if (typeof res === 'number') return res
-  if (typeof res === 'string' && /^\d+$/.test(res.trim())) return parseInt(res.trim(), 10)
-  if (!res || typeof res !== 'object') return 0
-  const raw = res.count ?? res.unreadCount ?? res.data?.count ?? res.data?.unreadCount ?? 0
-  const parsed = Number(raw)
-  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0
+const STORAGE_KEY = 'carline.notifications'
+
+function loadNotifications() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? JSON.parse(raw) : mockNotifications
+  } catch {
+    return mockNotifications
+  }
+}
+
+function saveNotifications(items) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(items))
+  } catch {
+    /* ignore */
+  }
 }
 
 export const useNotificationStore = create((set, get) => ({
-  notifications: [],
-  unreadCount: 0,
-  total: 0,
-  page: 1,
-  limit: 20,
+  notifications: loadNotifications(),
+  serverUnreadCount: null,
+  activeToast: null,
   loading: false,
-  refreshing: false,
   error: null,
-  filterType: 'ALL',
-  searchQuery: '',
-  activeToasts: [],
-  isSocketConnected: false,
-  fcmInitialized: false,
+  lastFetchedAt: null,
 
-  /**
-   * Fetch unread notification count for the bell badge (GET /api/v1/notification/unread-count)
-   */
-  fetchUnreadCount: async () => {
+  // 1. Fetch from /api/v1/notification/my
+  fetchNotifications: async () => {
+    set({ loading: true, error: null })
     try {
-      const res = await notificationService.getUnreadCount()
-      const count = parseUnreadCount(res)
-      set({ unreadCount: count })
-      return count
-    } catch (err) {
-      console.debug('[notificationStore] fetchUnreadCount failed:', err?.message)
-      return get().unreadCount
-    }
-  },
-
-  /**
-   * Update unread count from real-time Socket.IO event 'notification:count'
-   * @param {number|object} payload e.g. { count: 3 } or 3
-   */
-  handleCountUpdate: (payload) => {
-    const count = parseUnreadCount(payload)
-    set({ unreadCount: count })
-  },
-
-  /**
-   * Fetch paginated notification history (GET /api/v1/notification/my?page=1&limit=20)
-   */
-  fetchNotifications: async ({ page = 1, limit = 20, silent = false } = {}) => {
-    if (!silent) {
-      set({ loading: true, error: null })
-    } else {
-      set({ refreshing: true })
-    }
-
-    try {
-      const res = await notificationService.getMyNotifications({ page, limit })
-      const rawList = Array.isArray(res?.notifications)
-        ? res.notifications
-        : Array.isArray(res)
-        ? res
-        : []
-
-      const normalized = rawList.map(normalizeNotification).filter(Boolean)
-      const total = Number(res?.total ?? normalized.length)
-      const unreadFromList = normalized.filter((n) => !n.isRead && !n.read).length
-      const countFromApi = parseUnreadCount(res)
-      const finalCount = countFromApi > 0 ? countFromApi : unreadFromList
-
+      const res = await notificationApi.getMyNotifications()
+      const items = res?.notifications || (Array.isArray(res) ? res : [])
+      saveNotifications(items)
       set({
-        notifications: normalized,
-        total,
-        page: Number(res?.page ?? page),
-        limit: Number(res?.limit ?? limit),
-        unreadCount: finalCount,
+        notifications: items,
+        serverUnreadCount: res?.unreadCount ?? items.filter((n) => !n.read).length,
+        pagination: res?.pagination || null,
         loading: false,
-        refreshing: false,
         error: null,
+        lastFetchedAt: Date.now(),
       })
-
-      return normalized
+      return items
     } catch (err) {
-      console.warn('[notificationStore] fetchNotifications error:', err?.message)
-      set({
-        loading: false,
-        refreshing: false,
-        error: err?.message || 'Failed to load notifications',
-      })
-      return []
+      console.warn('[notificationStore] Could not fetch remote notifications, keeping current store:', err?.message || err)
+      set({ loading: false, error: err?.message || 'Failed to load notifications' })
+      return get().notifications
     }
   },
 
-  /**
-   * Mark a single notification as read (PATCH /api/v1/notification/:id/read)
-   * Decreases the unread badge counter by 1.
-   */
-  markAsRead: async (id) => {
-    if (!id) return
-    const target = get().notifications.find((n) => n.id === id || n._id === id)
-    const wasUnread = target ? !target.isRead && !target.read : true
-
-    const currentUnread =
-      get().unreadCount > 0
-        ? get().unreadCount
-        : get().notifications.filter((n) => !n.isRead && !n.read).length
-    const nextCount = wasUnread ? Math.max(0, currentUnread - 1) : currentUnread
-
-    // Optimistic UI update: mark notification read and decrease unreadCount
-    set((state) => ({
-      notifications: state.notifications.map((n) =>
-        n.id === id || n._id === id
-          ? { ...n, isRead: true, read: true, readAt: new Date().toISOString() }
-          : n
-      ),
-      unreadCount: nextCount,
-    }))
-
-    try {
-      await notificationService.markAsRead(id)
-    } catch (err) {
-      console.warn('[notificationStore] markAsRead failed:', err?.message)
+  // 2. Real-time event: notification:new
+  handleNewNotification: (incoming) => {
+    if (!incoming) return
+    const raw = incoming.notification || incoming.data || incoming
+    const normalized = normalizeNotification(raw) || {
+      id: raw._id || raw.id || `notif-${Date.now()}`,
+      title: raw.title || 'New Alert',
+      message: raw.body || raw.message || 'You received a new alert.',
+      category: 'alert',
+      priority: 'high',
+      time: 'Just now',
+      timestamp: new Date().toISOString(),
+      read: false,
+      isRead: false,
+      raw,
     }
-  },
 
-  /**
-   * Mark all notifications as read (PATCH /api/v1/notification/read-all)
-   * Resets unread counter to 0.
-   */
-  markAllAsRead: async () => {
-    // Optimistic UI update: set all notifications to read and counter to 0
-    set((state) => ({
-      notifications: state.notifications.map((n) => ({
-        ...n,
-        isRead: true,
-        read: true,
-        readAt: new Date().toISOString(),
-      })),
-      unreadCount: 0,
-    }))
+    // Play sound chime
+    playNotificationSound()
 
-    try {
-      await notificationService.markAllAsRead()
-    } catch (err) {
-      console.warn('[notificationStore] markAllAsRead failed:', err?.message)
-    }
-  },
+    set((s) => {
+      // Avoid duplicate if same ID already exists
+      const exists = s.notifications.some((n) => n.id === normalized.id)
+      const updated = exists
+        ? s.notifications.map((n) => (n.id === normalized.id ? normalized : n))
+        : [normalized, ...s.notifications]
 
-  // Backwards compatibility alias
-  markAllRead: async () => {
-    return get().markAllAsRead()
-  },
+      saveNotifications(updated)
 
-  /**
-   * Send test push notification (POST /api/v1/notification/test-push)
-   */
-  sendTestNotification: async (payload) => {
-    const res = await notificationService.sendTestPush(payload)
-    // Refetch notifications to reflect test notification in list
-    await get().fetchNotifications({ page: 1, limit: get().limit, silent: true })
-    return res
-  },
-
-  /**
-   * Handle incoming real-time notification (from Socket.IO 'notification:new' or FCM)
-   */
-  handleIncomingNotification: (raw) => {
-    const normalized = normalizeNotification(raw)
-    if (!normalized) return
-
-    // Sound alert
-    playNotificationChime()
-
-    // Update list & increment badge count
-    set((state) => {
-      const existingIdx = state.notifications.findIndex(
-        (n) =>
-          n.id === normalized.id ||
-          (normalized.data?.rideId &&
-            n.data?.rideId === normalized.data.rideId &&
-            n.type === normalized.type)
-      )
-
-      let updatedList = [...state.notifications]
-      if (existingIdx !== -1) {
-        updatedList[existingIdx] = normalized
-      } else {
-        updatedList = [normalized, ...state.notifications]
-      }
-
-      // Add to active toast queue (max 4 concurrent)
-      const toastItem = {
-        ...normalized,
-        toastId: `toast_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      }
-      const updatedToasts = [toastItem, ...state.activeToasts].slice(0, 4)
+      const currentCount = s.serverUnreadCount !== null
+        ? s.serverUnreadCount
+        : s.notifications.filter((n) => !n.read).length
 
       return {
-        notifications: updatedList,
-        unreadCount: state.unreadCount + 1,
-        total: state.total + 1,
-        activeToasts: updatedToasts,
+        notifications: updated,
+        serverUnreadCount: currentCount + 1,
+        activeToast: normalized, // triggers popup alert
       }
     })
   },
 
-  /**
-   * Dismiss foreground toast notification
-   */
-  dismissToast: (id) => {
-    set((state) => ({
-      activeToasts: state.activeToasts.filter((t) => t.id !== id && t.toastId !== id),
-    }))
+  // 3. Real-time event: notification:count
+  handleCountUpdate: (payload) => {
+    let count = 0
+    if (typeof payload === 'number') {
+      count = payload
+    } else if (payload && typeof payload === 'object') {
+      if (typeof payload.count === 'number') count = payload.count
+      else if (typeof payload.unreadCount === 'number') count = payload.unreadCount
+      else if (typeof payload.total === 'number') count = payload.total
+    }
+    set({ serverUnreadCount: Math.max(0, count) })
   },
 
-  setFilterType: (filterType) => set({ filterType }),
-  setSearchQuery: (searchQuery) => set({ searchQuery }),
-  setSocketConnected: (isSocketConnected) => set({ isSocketConnected }),
+  // Toast controls
+  showToast: (notif) => set({ activeToast: notif }),
+  dismissToast: () => set({ activeToast: null }),
 
-  /**
-   * Initialize Web Push notifications via Firebase Cloud Messaging
-   */
-  initFcm: async () => {
-    if (get().fcmInitialized) return
-    set({ fcmInitialized: true })
-    await initFirebaseMessaging((msg) => {
-      get().handleIncomingNotification(msg)
+  markRead: (id) => {
+    set((s) => {
+      const updated = s.notifications.map((n) => (n.id === id ? { ...n, read: true, isRead: true } : n))
+      saveNotifications(updated)
+      const currentCount = s.serverUnreadCount !== null
+        ? s.serverUnreadCount
+        : s.notifications.filter((n) => !n.read).length
+      return {
+        notifications: updated,
+        serverUnreadCount: Math.max(0, currentCount - 1),
+      }
     })
+    notificationApi.markAsRead(id).catch(() => {})
   },
+
+  toggleRead: (id) =>
+    set((s) => {
+      const target = s.notifications.find((n) => n.id === id)
+      const newReadState = !target?.read
+      const updated = s.notifications.map((n) => (n.id === id ? { ...n, read: newReadState, isRead: newReadState } : n))
+      saveNotifications(updated)
+
+      const currentCount = s.serverUnreadCount !== null
+        ? s.serverUnreadCount
+        : s.notifications.filter((n) => !n.read).length
+
+      const newCount = newReadState ? Math.max(0, currentCount - 1) : currentCount + 1
+
+      if (newReadState) {
+        notificationApi.markAsRead(id).catch(() => {})
+      }
+      return { notifications: updated, serverUnreadCount: newCount }
+    }),
+
+  markAllRead: () => {
+    set((s) => {
+      const updated = s.notifications.map((n) => ({ ...n, read: true, isRead: true }))
+      saveNotifications(updated)
+      return { notifications: updated, serverUnreadCount: 0 }
+    })
+    notificationApi.markAllAsRead().catch(() => {})
+  },
+
+  removeNotification: (id) =>
+    set((s) => {
+      const updated = s.notifications.filter((n) => n.id !== id)
+      saveNotifications(updated)
+      return { notifications: updated }
+    }),
+
+  clearAll: () =>
+    set(() => {
+      saveNotifications([])
+      return { notifications: [], serverUnreadCount: 0 }
+    }),
+
+  addNotification: (notif) =>
+    set((s) => {
+      const newNotif = {
+        id: Date.now(),
+        time: 'Just now',
+        timestamp: new Date().toISOString(),
+        read: false,
+        priority: 'normal',
+        category: 'system',
+        ...notif,
+      }
+      const updated = [newNotif, ...s.notifications]
+      saveNotifications(updated)
+      return { notifications: updated }
+    }),
 }))

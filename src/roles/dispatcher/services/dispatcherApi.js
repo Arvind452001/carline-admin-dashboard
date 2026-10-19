@@ -1,6 +1,5 @@
 import { apiClient, resolveUploadUrl } from '@/shared/services/apiClient'
 import { setCurrencySymbol } from '@/shared/utils/formatting'
-import { notificationService } from '@/shared/services/notificationService'
 
 const str = (value) => (value === undefined || value === null ? '' : String(value))
 const numOr = (value, fallback = 0) => {
@@ -453,9 +452,4 @@ export const dispatcherApi = {
       }
     }
   },
-
-  // 16. Notification APIs
-  notifications: notificationService,
 }
-
-export { notificationService }

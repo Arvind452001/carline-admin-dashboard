@@ -56,10 +56,12 @@ export const ROLE_NAV = {
     { key: 'cancelled-trips', label: 'Cancelled Trips', icon: 'XCircle' },
     { key: 'manual-booking', label: 'Manual Booking', icon: 'PlusSquare' },
     { key: 'dispatch-board', label: 'Dispatch Board', icon: 'LayoutGrid' },
+    { key: 'drivers', label: 'Fleet Drivers', icon: 'Car' },
     { key: 'customers', label: 'Customers', icon: 'UserRound' },
     { key: 'maps', label: 'Maps', icon: 'Compass' },
     { key: 'notifications', label: 'Notifications', icon: 'Bell' },
     { key: 'broadcasts', label: 'Broadcasts', icon: 'Megaphone' },
+    { key: 'profile', label: 'My Profile', icon: 'UserCheck' },
   ],
   [ROLES.DRIVER_MANAGER]: [
     { key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },

@@ -223,7 +223,7 @@ export default function DriverList() {
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => navigate(`/driver-manager/driver-list/${r.id}`)}
-              title="View Driver Dossier & Details"
+              title="View Driver Profile & Details"
               className="p-1.5 text-text-secondary hover:text-taxi-500 hover:bg-surface-hover rounded-lg transition-colors"
             >
               <Eye size={15} />

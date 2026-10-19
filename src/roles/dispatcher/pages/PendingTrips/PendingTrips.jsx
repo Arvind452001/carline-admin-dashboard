@@ -2,8 +2,8 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { 
   Search, Clock, Car, Sparkles, UserCheck, XCircle, 
-  RefreshCw, CheckCircle2, AlertCircle, Phone, Mail, User, X,
-  ExternalLink, Eye, Route, Receipt
+  RefreshCw, CheckCircle2, AlertCircle, Phone, Mail, MapPin, Navigation, User, X,
+  ExternalLink, Eye, Route, Receipt, Calendar, Building, Star
 } from 'lucide-react'
 import PageLayout from '@/layouts/PageLayout'
 import Input from '@/shared/components/Input'
@@ -12,6 +12,7 @@ import Table from '@/shared/components/Table'
 import Pagination from '@/shared/components/Pagination'
 import Modal from '@/shared/components/Modal'
 import Button from '@/shared/components/Button'
+import TripQuickModal from '@/roles/dispatcher/components/TripQuickModal'
 import { usePagination } from '@/shared/hooks/usePagination'
 import { useAuthStore } from '@/store/authStore'
 
@@ -691,195 +692,15 @@ export default function PendingTrips() {
       </div>
 
       {/* FULL RECORD DETAILS MODAL */}
-      {detailsModalTrip && (
-        <Modal
-          open={!!detailsModalTrip}
-          onClose={() => setDetailsModalTrip(null)}
-          title={`Trip Details: ${detailsModalTrip.tripId}`}
-          footer={
-            <div className="flex justify-between items-center w-full">
-              <span className="text-xs text-text-muted font-mono">
-                ID: {detailsModalTrip.id}
-              </span>
-              <div className="flex gap-2">
-                <Button variant="secondary" onClick={() => setDetailsModalTrip(null)}>
-                  Close
-                </Button>
-                <Button
-                  icon={ExternalLink}
-                  onClick={() => {
-                    const id = detailsModalTrip.id
-                    setDetailsModalTrip(null)
-                    navigate(`/dispatcher/trip-details?tripId=${id}`)
-                  }}
-                >
-                  Open Dedicated Page
-                </Button>
-              </div>
-            </div>
-          }
-        >
-          <div className="space-y-4 text-xs max-h-[70vh] overflow-y-auto pr-1">
-            {/* Header info */}
-            <div className="bg-surface p-3.5 rounded-xl border border-border-subtle flex justify-between items-center">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-base font-bold text-text-primary">{detailsModalTrip.tripId}</h3>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-500/10 text-amber-500 border border-amber-500/20">
-                    {detailsModalTrip.status}
-                  </span>
-                </div>
-                <p className="text-text-muted text-[11px] mt-0.5">
-                  Company: <strong>{detailsModalTrip.company?.name || 'ABC Taxi'}</strong> ({detailsModalTrip.company?.code || 'CMP-003'})
-                </p>
-              </div>
-
-              <div className="text-right">
-                <span className="text-lg font-bold text-emerald-500">
-                  {detailsModalTrip.fare}
-                </span>
-                <span className="text-[10px] text-text-muted block uppercase">
-                  {detailsModalTrip.fareDetails?.paymentMethod || 'WALLET'} • {detailsModalTrip.fareDetails?.paymentStatus || 'PENDING'}
-                </span>
-              </div>
-            </div>
-
-            {/* People: Customer & Driver */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Customer Card */}
-              <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-2">
-                <span className="text-[10px] font-bold uppercase text-taxi-500 flex items-center gap-1">
-                  <User size={12} /> Passenger / Customer
-                </span>
-                <p className="text-sm font-bold text-text-primary">{detailsModalTrip.customer}</p>
-                {detailsModalTrip.customerPhone && (
-                  <p className="text-text-secondary flex items-center gap-1.5">
-                    <Phone size={12} />
-                    <a href={`tel:${detailsModalTrip.customerPhone}`} className="hover:underline text-taxi-500">
-                      {detailsModalTrip.customerPhone}
-                    </a>
-                  </p>
-                )}
-                {detailsModalTrip.customerEmail && (
-                  <p className="text-text-muted flex items-center gap-1.5 text-[11px]">
-                    <Mail size={12} />
-                    <a href={`mailto:${detailsModalTrip.customerEmail}`} className="hover:underline">
-                      {detailsModalTrip.customerEmail}
-                    </a>
-                  </p>
-                )}
-                {detailsModalTrip.customerDetails?.id && (
-                  <p className="text-[10px] text-text-muted font-mono pt-1">
-                    Customer ID: {detailsModalTrip.customerDetails.id}
-                  </p>
-                )}
-              </div>
-
-              {/* Driver Card */}
-              <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-2">
-                <span className="text-[10px] font-bold uppercase text-emerald-500 flex items-center gap-1">
-                  <Car size={12} /> Assigned Driver
-                </span>
-                {detailsModalTrip.driver ? (
-                  <>
-                    <p className="text-sm font-bold text-text-primary">{detailsModalTrip.driver}</p>
-                    {detailsModalTrip.driverPhone && (
-                      <p className="text-text-secondary flex items-center gap-1.5">
-                        <Phone size={12} />
-                        <a href={`tel:${detailsModalTrip.driverPhone}`} className="hover:underline text-emerald-500">
-                          {detailsModalTrip.driverPhone}
-                        </a>
-                      </p>
-                    )}
-                    <p className="text-[11px] text-text-muted">
-                      Vehicle: <strong className="text-text-primary">{detailsModalTrip.driverVehicle}</strong>
-                      {detailsModalTrip.driverPlate ? ` • ${detailsModalTrip.driverPlate}` : ''}
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-text-muted py-2">No driver assigned yet.</p>
-                )}
-              </div>
-            </div>
-
-            {/* Route Details */}
-            <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-3">
-              <span className="text-[10px] font-bold uppercase text-text-secondary flex items-center gap-1">
-                <Route size={12} /> Route Details
-              </span>
-
-              <div className="space-y-2">
-                <div>
-                  <span className="text-[10px] text-emerald-600 font-bold block uppercase">Pickup:</span>
-                  <p className="text-text-primary font-medium">{detailsModalTrip.pickup}</p>
-                  {detailsModalTrip.pickupLat !== 0 && (
-                    <p className="text-[10px] text-text-muted font-mono mt-0.5">
-                      Coordinates: {detailsModalTrip.pickupLat}, {detailsModalTrip.pickupLng}
-                    </p>
-                  )}
-                </div>
-
-                <div className="pt-2 border-t border-border-subtle/50">
-                  <span className="text-[10px] text-rose-500 font-bold block uppercase">Dropoff Destination:</span>
-                  <p className="text-text-primary font-medium">{detailsModalTrip.dest}</p>
-                  {detailsModalTrip.dropoffLat !== 0 && (
-                    <p className="text-[10px] text-text-muted font-mono mt-0.5">
-                      Coordinates: {detailsModalTrip.dropoffLat}, {detailsModalTrip.dropoffLng}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Fare Breakdown (if available) */}
-            {detailsModalTrip.fareDetails?.breakdown && (
-              <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-2">
-                <span className="text-[10px] font-bold uppercase text-text-secondary flex items-center gap-1">
-                  <Receipt size={12} /> Fare Calculation
-                </span>
-                <div className="space-y-1.5 text-[11px]">
-                  <div className="flex justify-between text-text-secondary">
-                    <span>Base Price</span>
-                    <span className="font-semibold text-text-primary">${detailsModalTrip.fareDetails.breakdown.basePrice}</span>
-                  </div>
-                  {detailsModalTrip.fareDetails.breakdown.distanceRate > 0 && (
-                    <div className="flex justify-between text-text-secondary">
-                      <span>Distance Charge ({detailsModalTrip.fareDetails.breakdown.distanceKm} km @ ${detailsModalTrip.fareDetails.breakdown.perKmRate}/km)</span>
-                      <span className="font-semibold text-text-primary">${detailsModalTrip.fareDetails.breakdown.distanceRate}</span>
-                    </div>
-                  )}
-                  {detailsModalTrip.fareDetails.breakdown.timeRate > 0 && (
-                    <div className="flex justify-between text-text-secondary">
-                      <span>Time Charge ({detailsModalTrip.fareDetails.breakdown.durationMinutes} min @ ${detailsModalTrip.fareDetails.breakdown.perMinuteRate}/min)</span>
-                      <span className="font-semibold text-text-primary">${detailsModalTrip.fareDetails.breakdown.timeRate}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between font-bold text-text-primary pt-1 border-t border-border-subtle/50">
-                    <span>Payable Total</span>
-                    <span className="text-emerald-500">${detailsModalTrip.fareDetails.breakdown.payableFare || detailsModalTrip.fareDetails.amount}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Timestamps */}
-            <div className="bg-surface p-3.5 rounded-xl border border-border-subtle grid grid-cols-2 gap-3 text-center">
-              <div>
-                <span className="text-[10px] text-text-muted block">Requested / Scheduled</span>
-                <p className="font-bold text-text-primary mt-0.5">
-                  {detailsModalTrip.scheduledAt ? formatDate(detailsModalTrip.scheduledAt) : detailsModalTrip.time}
-                </p>
-              </div>
-              <div>
-                <span className="text-[10px] text-text-muted block">Created At</span>
-                <p className="font-bold text-text-primary mt-0.5">
-                  {detailsModalTrip.createdAt ? formatDate(detailsModalTrip.createdAt) : '—'}
-                </p>
-              </div>
-            </div>
-          </div>
-        </Modal>
-      )}
+      <TripQuickModal
+        trip={detailsModalTrip}
+        open={!!detailsModalTrip}
+        onClose={() => setDetailsModalTrip(null)}
+        onAssignDriver={(t) => {
+          setDetailsModalTrip(null)
+          setAssignModalTrip(t)
+        }}
+      />
 
       {/* Manual Assign Driver Modal */}
       {assignModalTrip && (

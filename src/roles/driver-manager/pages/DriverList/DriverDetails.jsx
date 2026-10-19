@@ -190,7 +190,8 @@ export default function DriverDetails() {
   // The same page is reachable from every panel, so Back stays in-role.
   function goBack() {
     const { pathname } = window.location
-    if (pathname.includes('/company-admin')) navigate('/company-admin/drivers')
+    if (pathname.includes('/dispatcher')) navigate('/dispatcher/drivers')
+    else if (pathname.includes('/company-admin')) navigate('/company-admin/drivers')
     else if (pathname.includes('/super-admin')) navigate('/super-admin/drivers')
     else navigate('/driver-manager/driver-list')
   }

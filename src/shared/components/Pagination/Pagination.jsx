@@ -13,7 +13,7 @@ export default function Pagination({ page, totalPages, onChange }) {
         <button
           onClick={() => onChange(Math.max(1, page - 1))}
           disabled={page === 1}
-          className="rounded-md p-1.5 text-text-muted hover:bg-surface-raised hover:text-text-primary disabled:opacity-30"
+          className="rounded-lg p-2 text-text-muted hover:bg-surface-hover hover:text-text-primary disabled:opacity-30 disabled:pointer-events-none cursor-pointer border border-border-subtle bg-surface transition-all active:scale-95"
         >
           <ChevronLeft size={16} />
         </button>
@@ -22,8 +22,10 @@ export default function Pagination({ page, totalPages, onChange }) {
             key={p}
             onClick={() => onChange(p)}
             className={clsx(
-              'h-7 w-7 rounded-md text-xs font-medium',
-              p === page ? 'bg-taxi-500 text-ink' : 'text-text-secondary hover:bg-surface-raised'
+              'h-8 w-8 rounded-lg text-xs font-semibold flex items-center justify-center transition-all cursor-pointer active:scale-95',
+              p === page
+                ? 'bg-taxi-500 text-white shadow-xs'
+                : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary border border-border-subtle bg-surface'
             )}
           >
             {p}
@@ -32,7 +34,7 @@ export default function Pagination({ page, totalPages, onChange }) {
         <button
           onClick={() => onChange(Math.min(totalPages, page + 1))}
           disabled={page === totalPages}
-          className="rounded-md p-1.5 text-text-muted hover:bg-surface-raised hover:text-text-primary disabled:opacity-30"
+          className="rounded-lg p-2 text-text-muted hover:bg-surface-hover hover:text-text-primary disabled:opacity-30 disabled:pointer-events-none cursor-pointer border border-border-subtle bg-surface transition-all active:scale-95"
         >
           <ChevronRight size={16} />
         </button>
