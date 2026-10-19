@@ -242,3 +242,8 @@ export { BASE as COMPANY_TRIPS_BASE }
 export function createDispatcherTrip(payload) { return apiClient.post(BASE, payload); }
 export function listPassengerVehicleTypes() { return apiClient.get('/ride/vehicle-types'); }
 export function modifyCompanyTrip(tripId, payload) { return apiClient.patch(BASE + '/' + encodeURIComponent(tripId) + '/modify', payload); }
+export function autoAssignTrip(tripId) { return apiClient.post(`${BASE}/${encodeURIComponent(tripId)}/auto-assign`); }
+export function assignTripDriver(tripId, driverId) { return apiClient.post(`${BASE}/${encodeURIComponent(tripId)}/assign-driver`, typeof driverId === 'object' ? driverId : { driverId }); }
+export function cancelCompanyTrip(tripId, cancelReason = 'Cancelled by Company Admin') { return apiClient.post(`${BASE}/${encodeURIComponent(tripId)}/cancel`, typeof cancelReason === 'object' ? cancelReason : { cancelReason }); }
+export function deleteCompanyTrip(tripId) { return apiClient.delete(`${BASE}/${encodeURIComponent(tripId)}`); }
+

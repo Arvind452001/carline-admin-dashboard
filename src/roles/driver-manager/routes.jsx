@@ -7,6 +7,7 @@ import Availability from './pages/Availability'
 import Vehicles from './pages/Vehicles'
 import Documents from './pages/Documents'
 import Performance from './pages/Performance'
+import WaitingCharges from './pages/WaitingCharges'
 import Logout from './pages/Logout'
 
 export const driverManagerRoutes = [
@@ -20,5 +21,6 @@ export const driverManagerRoutes = [
   { path: 'vehicles', element: <Vehicles /> },
   { path: 'documents', element: <Documents /> },
   { path: 'performance', element: <Performance /> },
+  { path: 'waiting-charges', element: <WaitingCharges /> },
   { path: 'logout', element: <Logout /> },
 ]

@@ -25,6 +25,14 @@ function unwrap(payload, status) {
       data: payload.data,
     })
   }
+  if (payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)) {
+    if (payload.message && payload.data.message === undefined) {
+      payload.data.message = payload.message
+    }
+    if (payload.statusCode && payload.data.statusCode === undefined) {
+      payload.data.statusCode = payload.statusCode
+    }
+  }
   return payload.data
 }
 

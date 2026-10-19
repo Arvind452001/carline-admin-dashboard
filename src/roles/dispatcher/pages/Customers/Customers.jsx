@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   UserPlus,
   RefreshCw,
@@ -13,6 +14,17 @@ import {
   Search as SearchIcon,
   Car,
   AlertCircle,
+  Eye,
+  ExternalLink,
+  Sparkles,
+  MapPin,
+  Clock,
+  ArrowRight,
+  Receipt,
+  XCircle,
+  CheckCircle2,
+  DollarSign,
+  User,
 } from 'lucide-react'
 
 import PageLayout from '@/layouts/PageLayout'
@@ -21,13 +33,16 @@ import Button from '@/shared/components/Button'
 import Modal from '@/shared/components/Modal'
 import Input from '@/shared/components/Input'
 import Table from '@/shared/components/Table'
+import Pagination from '@/shared/components/Pagination'
 import { useAuthStore } from '@/store/authStore'
+import { apiClient } from '@/shared/services/apiClient'
 import { useDebounce } from '@/shared/hooks/useDebounce'
 
 export default function Customers() {
+  const navigate = useNavigate()
   const token = useAuthStore((s) => s.token)
 
-  // Customer data
+  // Customer data & company
   const [customers, setCustomers] = useState([])
   const [company, setCompany] = useState(null)
 
@@ -42,7 +57,7 @@ export default function Customers() {
     total: 0,
     page: 1,
     limit: 10,
-    totalPages: 0,
+    totalPages: 1,
   })
 
   const [page, setPage] = useState(1)
@@ -53,8 +68,9 @@ export default function Customers() {
 
   const debouncedSearch = useDebounce(searchQuery, 250)
 
-  // Add customer modal
-  const [showModal, setShowModal] = useState(false)
+  // Customer Details Modal & Add Customer Modal
+  const [selectedCustomer, setSelectedCustomer] = useState(null)
+  const [showAddModal, setShowAddModal] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -71,15 +87,8 @@ export default function Customers() {
 
   const getHeaders = (jsonContent = false) => {
     const headers = {}
-
-    if (jsonContent) {
-      headers['Content-Type'] = 'application/json'
-    }
-
-    if (token) {
-      headers.Authorization = `Bearer ${token}`
-    }
-
+    if (jsonContent) headers['Content-Type'] = 'application/json'
+    if (token) headers.Authorization = `Bearer ${token}`
     return headers
   }
 
@@ -93,24 +102,27 @@ export default function Customers() {
         page: String(page),
         limit: '10',
       })
-
-      const res = await fetch(
-        `${baseUrl}/company/customers/same-company?${params}`,
-        {
-          method: 'GET',
-          headers: getHeaders(),
-        }
-      )
-
-      const json = await res.json()
-
-      if (!res.ok || json?.success === false) {
-        throw new Error(
-          json?.message || 'Failed to fetch company customers'
-        )
+      if (debouncedSearch) {
+        params.append('search', debouncedSearch)
       }
 
-      const data = json?.data || {}
+      let data = null
+      try {
+        data = await apiClient.get(`/company/customers/same-company?${params}`)
+      } catch {
+        const res = await fetch(
+          `${baseUrl}/company/customers/same-company?${params}`,
+          {
+            method: 'GET',
+            headers: getHeaders(),
+          }
+        )
+        const json = await res.json()
+        if (!res.ok || json?.success === false) {
+          throw new Error(json?.message || 'Failed to fetch company customers')
+        }
+        data = json?.data || {}
+      }
 
       setCompany(data.company || null)
 
@@ -121,15 +133,13 @@ export default function Customers() {
         restricted: data.counts?.restricted ?? 0,
       })
 
-      setCustomers(
-        Array.isArray(data.customers) ? data.customers : []
-      )
+      setCustomers(Array.isArray(data.customers) ? data.customers : [])
 
       setPagination({
         total: data.pagination?.total ?? (Array.isArray(data.customers) ? data.customers.length : 0),
         page: data.pagination?.page ?? page,
         limit: data.pagination?.limit ?? 10,
-        totalPages: data.pagination?.totalPages ?? 1,
+        totalPages: Math.max(1, data.pagination?.totalPages ?? 1),
       })
     } catch (err) {
       console.error('Error fetching customers:', err)
@@ -138,7 +148,7 @@ export default function Customers() {
     } finally {
       setLoading(false)
     }
-  }, [token, page])
+  }, [token, page, debouncedSearch])
 
   useEffect(() => {
     fetchCustomers()
@@ -147,13 +157,9 @@ export default function Customers() {
   // Add a new customer
   const handleAddCustomerSubmit = async (e) => {
     e?.preventDefault()
-
     if (submitting) return
 
-    if (
-      !newCustomer.firstName.trim() ||
-      !newCustomer.phoneNumber.trim()
-    ) {
+    if (!newCustomer.firstName.trim() || !newCustomer.phoneNumber.trim()) {
       setErrorMsg('First name and phone number are required.')
       return
     }
@@ -162,23 +168,25 @@ export default function Customers() {
       setSubmitting(true)
       setErrorMsg('')
 
-      const res = await fetch(`${baseUrl}/company/customers/add`, {
-        method: 'POST',
-        headers: getHeaders(true),
-        body: JSON.stringify({
-          firstName: newCustomer.firstName.trim(),
-          lastName: newCustomer.lastName.trim(),
-          phoneNumber: newCustomer.phoneNumber.trim(),
-          ...(newCustomer.email.trim()
-            ? { email: newCustomer.email.trim() }
-            : {}),
-        }),
-      })
+      const payload = {
+        firstName: newCustomer.firstName.trim(),
+        lastName: newCustomer.lastName.trim(),
+        phoneNumber: newCustomer.phoneNumber.trim(),
+        ...(newCustomer.email.trim() ? { email: newCustomer.email.trim() } : {}),
+      }
 
-      const json = await res.json()
-
-      if (!res.ok || json?.success === false) {
-        throw new Error(json?.message || 'Failed to add customer')
+      try {
+        await apiClient.post('/company/customers/add', payload)
+      } catch {
+        const res = await fetch(`${baseUrl}/company/customers/add`, {
+          method: 'POST',
+          headers: getHeaders(true),
+          body: JSON.stringify(payload),
+        })
+        const json = await res.json()
+        if (!res.ok || json?.success === false) {
+          throw new Error(json?.message || 'Failed to add customer')
+        }
       }
 
       setNewCustomer({
@@ -187,8 +195,7 @@ export default function Customers() {
         phoneNumber: '',
         email: '',
       })
-
-      setShowModal(false)
+      setShowAddModal(false)
 
       if (page !== 1) {
         setPage(1)
@@ -203,45 +210,45 @@ export default function Customers() {
     }
   }
 
-  // Close modal and clear errors
-  const closeModal = () => {
-    if (submitting) return
-    setShowModal(false)
-    setErrorMsg('')
-  }
-
-  // Resolve customer status from available API fields
+  // Resolve customer status
   const getCustomerStatus = (customer) => {
-    if (customer.status) {
-      return customer.status
-    }
-
-    if (customer.isRestricted === true) {
-      return 'restricted'
-    }
-
-    if (typeof customer.isActive === 'boolean') {
-      return customer.isActive ? 'active' : 'inactive'
-    }
-
+    if (customer.status) return customer.status.toLowerCase()
+    if (customer.isRestricted === true) return 'restricted'
+    if (typeof customer.isActive === 'boolean') return customer.isActive ? 'active' : 'inactive'
     return 'active'
   }
 
   // Format dates safely
   const formatDate = (value) => {
-    if (!value) return '-'
-
-    const date = new Date(value)
-
-    if (Number.isNaN(date.getTime())) {
-      return '-'
+    if (!value || value === '-') return '—'
+    try {
+      const d = new Date(value)
+      if (Number.isNaN(d.getTime())) return String(value)
+      return d.toLocaleDateString('en-US', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      })
+    } catch {
+      return String(value)
     }
+  }
 
-    return date.toLocaleDateString('en-US', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    })
+  const formatDateTime = (value) => {
+    if (!value) return '—'
+    try {
+      const d = new Date(value)
+      if (Number.isNaN(d.getTime())) return String(value)
+      return d.toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    } catch {
+      return String(value)
+    }
   }
 
   // Filter customers by local search & status
@@ -255,7 +262,7 @@ export default function Customers() {
       if (debouncedSearch) {
         const query = debouncedSearch.toLowerCase()
         const fullName = `${customer.firstName || ''} ${customer.lastName || ''}`.toLowerCase()
-        const name = (customer.name || fullName || '').toLowerCase()
+        const name = (customer.name || customer.customer || fullName || '').toLowerCase()
         const phone = (customer.phoneNumber || customer.phone || '').toLowerCase()
         const email = (customer.email || '').toLowerCase()
         const id = (customer.customerId || customer.id || customer._id || '').toLowerCase()
@@ -272,7 +279,7 @@ export default function Customers() {
     })
   }, [customers, statusFilter, debouncedSearch])
 
-  // Stat cards matching Dispatcher Dashboard layout
+  // Interactive Stat Cards
   const statCards = [
     {
       label: 'Total Customers',
@@ -281,14 +288,16 @@ export default function Customers() {
       color: 'text-signal-blue',
       bg: 'bg-signal-blue/10',
       valueColor: 'text-signal-blue',
+      filterKey: 'all',
     },
     {
       label: 'Active Riders',
       value: counts.active,
       icon: UserCheck,
-      color: 'text-emerald-600',
+      color: 'text-emerald-500',
       bg: 'bg-emerald-500/10',
-      valueColor: 'text-emerald-600',
+      valueColor: 'text-emerald-500',
+      filterKey: 'active',
     },
     {
       label: 'Inactive',
@@ -297,121 +306,163 @@ export default function Customers() {
       color: 'text-text-muted',
       bg: 'bg-slate-500/10',
       valueColor: 'text-text-primary',
+      filterKey: 'inactive',
     },
     {
       label: 'Restricted',
       value: counts.restricted,
       icon: ShieldAlert,
-      color: 'text-signal-red',
-      bg: 'bg-red-500/10',
-      valueColor: 'text-signal-red',
+      color: 'text-rose-500',
+      bg: 'bg-rose-500/10',
+      valueColor: 'text-rose-500',
+      filterKey: 'restricted',
     },
   ]
 
   // Filter tabs
   const filterTabs = [
-    { key: 'all', label: 'All Customers' },
-    { key: 'active', label: 'Active' },
-    { key: 'inactive', label: 'Inactive' },
-    { key: 'restricted', label: 'Restricted' },
+    { key: 'all', label: `All (${counts.all || customers.length})` },
+    { key: 'active', label: `Active (${counts.active})` },
+    { key: 'inactive', label: `Inactive (${counts.inactive})` },
+    { key: 'restricted', label: `Restricted (${counts.restricted})` },
   ]
 
   // Table columns definition
   const columns = [
     {
       key: 'customer',
-      label: 'Customer',
+      label: 'CUSTOMER',
       render: (r) => {
         const fullName = [r.firstName, r.lastName].filter(Boolean).join(' ')
         const displayName = r.name || fullName || r.customer || 'Unknown Rider'
         const initial = displayName.charAt(0).toUpperCase() || 'C'
+        const custId = r.customerId || r.id || r._id
 
         return (
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-taxi-500/10 font-bold text-taxi-500 text-xs">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-taxi-500/20 to-amber-500/10 font-bold text-taxi-500 text-xs border border-taxi-500/20 shadow-xs">
               {initial}
             </div>
             <div className="min-w-0">
-              <p className="font-bold text-text-primary truncate text-sm">
+              <p className="font-bold text-text-primary truncate text-xs">
                 {displayName}
               </p>
-              <p className="text-xs text-text-muted truncate">
-                {r.customerId || r.id || r._id ? `ID: ${r.customerId || r.id || r._id}` : 'Standard Customer'}
-              </p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <StatusBadge status={getCustomerStatus(r)} />
+                {custId && (
+                  <span className="text-[10px] text-text-muted font-mono truncate max-w-[120px]" title={custId}>
+                    ID: {custId.slice(-6)}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         )
       },
     },
     {
-      key: 'phone',
-      label: 'Phone Number',
+      key: 'contact',
+      label: 'CONTACT INFO',
       render: (r) => {
         const phone = r.phoneNumber || r.phone
-        return phone ? (
-          <div className="flex items-center gap-1.5 text-xs text-text-primary font-medium">
-            <Phone size={13} className="text-text-muted" />
-            <span>{phone}</span>
+        return (
+          <div className="space-y-0.5">
+            {phone ? (
+              <a
+                href={`tel:${phone}`}
+                className="flex items-center gap-1.5 text-xs text-text-primary font-medium hover:text-taxi-500 transition-colors"
+                title="Click to call"
+              >
+                <Phone size={11} className="text-taxi-500 shrink-0" />
+                <span>{phone}</span>
+              </a>
+            ) : (
+              <span className="text-text-muted text-xs">—</span>
+            )}
+            {r.email && (
+              <a
+                href={`mailto:${r.email}`}
+                className="flex items-center gap-1.5 text-[11px] text-text-muted hover:text-taxi-500 transition-colors truncate max-w-[170px]"
+                title={r.email}
+              >
+                <Mail size={11} className="text-text-muted shrink-0" />
+                <span className="truncate">{r.email}</span>
+              </a>
+            )}
           </div>
-        ) : (
-          <span className="text-text-muted text-xs">-</span>
         )
-      },
-    },
-    {
-      key: 'email',
-      label: 'Email',
-      render: (r) =>
-        r.email ? (
-          <div className="flex items-center gap-1.5 text-xs text-text-secondary">
-            <Mail size={13} className="text-text-muted" />
-            <span className="truncate max-w-[160px]">{r.email}</span>
-          </div>
-        ) : (
-          <span className="text-text-muted text-xs">-</span>
-        ),
-    },
-    {
-      key: 'status',
-      label: 'Status',
-      render: (r) => {
-        const status = getCustomerStatus(r)
-        return <StatusBadge status={status} />
       },
     },
     {
       key: 'trips',
-      label: 'Total Trips',
-      align: 'center',
+      label: 'TRIP STATS',
       render: (r) => {
-        const count = r.trips ?? r.totalTrips ?? r.tripCount ?? 0
+        const total = r.totalTrips ?? r.trips ?? 0
+        const completed = r.completedTrips ?? 0
+        const cancelled = r.cancelledTrips ?? 0
+
         return (
-          <span className="inline-flex items-center gap-1 font-bold text-xs bg-surface-raised px-2.5 py-1 rounded-md text-text-primary border border-border-subtle">
-            <Car size={12} className="text-taxi-500" />
-            {count}
-          </span>
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 font-bold text-xs text-text-primary">
+                <Car size={12} className="text-taxi-500 shrink-0" />
+                {total} {total === 1 ? 'Trip' : 'Trips'}
+              </span>
+            </div>
+            <div className="flex items-center gap-1 text-[10px]">
+              <span className="px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-semibold" title="Completed rides">
+                {completed} done
+              </span>
+              {cancelled > 0 && (
+                <span className="px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-500 border border-rose-500/20 font-semibold" title="Cancelled rides">
+                  {cancelled} canc.
+                </span>
+              )}
+            </div>
+          </div>
         )
       },
     },
+  
     {
-      key: 'lastTrip',
-      label: 'Last Trip',
-      render: (r) => {
-        const lastTrip = r.lastTrip || r.lastTripAt
-        return lastTrip ? (
-          <span className="text-xs text-text-secondary">{formatDate(lastTrip)}</span>
-        ) : (
-          <span className="text-xs text-text-muted">No trips yet</span>
-        )
-      },
-    },
-    {
-      key: 'createdAt',
-      label: 'Registered On',
+      key: 'joinedAt',
+      label: 'REGISTERED ON',
       render: (r) => (
-        <div className="flex items-center gap-1.5 text-xs text-text-muted">
-          <Calendar size={12} className="text-text-muted" />
-          <span>{formatDate(r.createdAt)}</span>
+        <div className="flex items-center gap-1.5 text-xs text-text-secondary">
+          <Calendar size={12} className="text-taxi-500 shrink-0" />
+          <span>{formatDate(r.joinedAt || r.createdAt)}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'actions',
+      label: 'ACTIONS',
+      sticky: 'right',
+      render: (r) => (
+        <div className="flex items-center gap-1.5">
+          {/* View Profile Modal */}
+          <button
+            onClick={() => setSelectedCustomer(r)}
+            className="p-1.5 rounded-lg bg-surface hover:bg-surface-hover border border-border-strong text-text-secondary hover:text-text-primary transition-all"
+            title="View Full Customer Record"
+          >
+            <Eye size={13} />
+          </button>
+
+          {/* Quick Book Ride for Customer */}
+          <button
+            onClick={() => {
+              const custId = r.customerId || r._id || ''
+              const name = r.name || r.customer || ''
+              const phone = r.phoneNumber || r.phone || ''
+              navigate(`/dispatcher/manual-booking?customerId=${encodeURIComponent(custId)}&name=${encodeURIComponent(name)}&phone=${encodeURIComponent(phone)}`)
+            }}
+            className="px-2.5 py-1 text-xs rounded-lg bg-taxi-500/10 border border-taxi-500/20 text-taxi-500 hover:bg-taxi-500/20 font-semibold flex items-center gap-1 transition-all"
+            title="Create a New Booking for this Rider"
+          >
+            <Sparkles size={11} />
+            <span>Book</span>
+          </button>
         </div>
       ),
     },
@@ -420,7 +471,7 @@ export default function Customers() {
   return (
     <PageLayout
       title="Customers Directory"
-      description="Manage company customer profiles, track ride history, and register new riders."
+      description="Manage registered company customers, review ride frequency, and book rides on their behalf."
       actions={
         <div className="flex items-center gap-2">
           <Button
@@ -429,14 +480,14 @@ export default function Customers() {
             onClick={fetchCustomers}
             disabled={loading}
           >
-            Refresh
+            {loading ? 'Refreshing...' : 'Refresh'}
           </Button>
 
           <Button
             icon={UserPlus}
             onClick={() => {
               setErrorMsg('')
-              setShowModal(true)
+              setShowAddModal(true)
             }}
           >
             Add Customer
@@ -444,47 +495,64 @@ export default function Customers() {
         </div>
       }
     >
-      <div className="space-y-6">
+      <div className="space-y-4">
         {/* Company Header Card */}
         {company && (
-          <div className="glass-card rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="glass-card rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 border border-border-subtle">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-taxi-500/10 text-taxi-500">
-                <Building2 size={20} />
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-taxi-500/10 text-taxi-500 border border-taxi-500/20">
+                <Building2 size={22} />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-text-primary">
-                  {company.name || 'Company Account'}
-                </h3>
-                <p className="text-xs text-text-muted">
-                  Company Code: <span className="font-semibold text-text-secondary">{company.code || '-'}</span>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-text-primary">
+                    {company.name || 'Company Account'}
+                  </h3>
+                  {company.code && (
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-surface-raised border border-border-subtle text-text-secondary font-bold">
+                      {company.code}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-text-muted mt-0.5">
+                  Customers registered under this fleet company account
                 </p>
               </div>
             </div>
-            <div className="text-xs bg-surface-raised px-3 py-1.5 rounded-lg border border-border-subtle text-text-secondary">
-              ID: <span className="font-mono font-medium text-text-primary">{company.id || company._id || '-'}</span>
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-text-muted">Company ID:</span>
+              <span className="font-mono px-2.5 py-1 rounded-lg bg-surface border border-border-subtle text-text-primary font-medium">
+                {company.id || company._id || 'CMP-003'}
+              </span>
             </div>
           </div>
         )}
 
-        {/* KPI Cards Grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Interactive KPI Cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {statCards.map((item) => {
             const Icon = item.icon
+            const isSelected = statusFilter === item.filterKey
             return (
               <div
                 key={item.label}
-                className="bg-surface p-4 rounded-xl border border-border-subtle flex items-center justify-between gap-3 shadow-[0_1px_3px_rgba(46,41,34,0.04)]"
+                onClick={() => setStatusFilter(item.filterKey)}
+                className={`glass-card p-3.5 rounded-xl border flex items-center justify-between gap-3 cursor-pointer transition-all ${
+                  isSelected
+                    ? 'border-taxi-500 ring-2 ring-taxi-500/20 bg-surface-raised'
+                    : 'border-border-subtle hover:border-border-strong'
+                }`}
               >
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wider text-text-muted">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
                     {item.label}
                   </p>
-                  <p className={`mt-1 text-2xl font-black ${item.valueColor}`}>
+                  <p className={`mt-0.5 text-xl font-bold ${item.valueColor}`}>
                     {item.value}
                   </p>
                 </div>
-                <div className={`rounded-xl p-3 ${item.bg}`}>
+                <div className={`rounded-xl p-2.5 ${item.bg}`}>
                   <Icon className={`h-5 w-5 ${item.color}`} />
                 </div>
               </div>
@@ -496,7 +564,7 @@ export default function Customers() {
         {error && (
           <div
             role="alert"
-            className="flex items-center justify-between gap-3 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-xs text-signal-red"
+            className="flex items-center justify-between gap-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3.5 text-xs text-rose-500"
           >
             <div className="flex items-center gap-2">
               <AlertCircle size={16} />
@@ -512,122 +580,279 @@ export default function Customers() {
           </div>
         )}
 
-        {/* Customers Table Card */}
-        <div className="glass-card rounded-2xl p-6 space-y-4">
-          {/* Table Toolbar: Filter Tabs & Search */}
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-border-subtle pb-4">
-            {/* Filter Tabs */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-              {filterTabs.map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => setStatusFilter(tab.key)}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-                    statusFilter === tab.key
-                      ? 'bg-taxi-500 text-white shadow-sm'
-                      : 'bg-surface text-text-secondary hover:bg-surface-raised hover:text-text-primary border border-border-subtle'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Search Input */}
-            <div className="relative w-full sm:w-72">
-              <SearchIcon
-                size={15}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted"
-              />
-              <input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by name, phone, email..."
-                className="w-full rounded-lg border border-border-subtle bg-surface py-2 pl-9 pr-3 text-xs text-text-primary placeholder:text-text-muted focus:border-taxi-500 focus:outline-none"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-text-muted hover:text-text-primary"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Table Container */}
-          <div className="relative">
-            {loading && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-surface/70 backdrop-blur-xs">
-                <div className="flex items-center gap-2 rounded-lg bg-surface px-4 py-2 text-xs font-semibold text-text-primary shadow-lg border border-border-subtle">
-                  <RefreshCw className="h-4 w-4 animate-spin text-taxi-500" />
-                  Loading customers...
-                </div>
-              </div>
-            )}
-
-            <Table
-              columns={columns}
-              rows={filteredCustomers}
-              emptyLabel={
-                searchQuery || statusFilter !== 'all'
-                  ? 'No customers match your search criteria'
-                  : 'No customers registered yet'
-              }
+        {/* Search & Filter Bar */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 glass-card p-4 rounded-2xl">
+          {/* Search Box */}
+          <div className="w-full sm:w-80">
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by customer, phone, email, or ID..."
+              icon={SearchIcon}
             />
           </div>
 
-          {/* Pagination Controls */}
+          {/* Filter Pills */}
+          <div className="flex items-center gap-1.5 self-start sm:self-auto overflow-x-auto w-full sm:w-auto scrollbar-none">
+            {filterTabs.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setStatusFilter(tab.key)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all shrink-0 ${
+                  statusFilter === tab.key
+                    ? 'bg-taxi-500 text-black font-bold shadow-xs'
+                    : 'bg-surface hover:bg-surface-hover text-text-secondary border border-border-subtle'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Customers Table Container */}
+        <div className="glass-card rounded-2xl overflow-hidden shadow-xs relative">
+          {loading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-surface/70 backdrop-blur-xs">
+              <div className="flex items-center gap-2 rounded-xl bg-surface px-4 py-2 text-xs font-semibold text-text-primary shadow-lg border border-border-subtle">
+                <RefreshCw className="h-4 w-4 animate-spin text-taxi-500" />
+                Updating customers...
+              </div>
+            </div>
+          )}
+
+          <Table
+            borderless
+            columns={columns}
+            rows={filteredCustomers}
+            keyField="_id"
+            emptyLabel={
+              searchQuery || statusFilter !== 'all'
+                ? 'No customers match your active search or filter'
+                : 'No customers registered under this company yet'
+            }
+          />
+
           {pagination.totalPages > 1 && (
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-border-subtle">
+            <div className="p-4 border-t border-border-subtle flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-text-muted">
                 Showing{' '}
-                <span className="font-semibold text-text-secondary">
+                <strong className="text-text-primary">
                   {(pagination.page - 1) * pagination.limit + 1}–
                   {Math.min(pagination.page * pagination.limit, pagination.total)}
-                </span>{' '}
-                of <span className="font-semibold text-text-secondary">{pagination.total}</span> customers
+                </strong>{' '}
+                of <strong className="text-text-primary">{pagination.total}</strong> customers
               </p>
 
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  size="xs"
-                  disabled={loading || page <= 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                >
-                  Previous
-                </Button>
-
-                <span className="text-xs text-text-secondary px-2">
-                  Page {pagination.page} of {pagination.totalPages}
-                </span>
-
-                <Button
-                  variant="secondary"
-                  size="xs"
-                  disabled={loading || page >= pagination.totalPages}
-                  onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
-                >
-                  Next
-                </Button>
-              </div>
+              <Pagination
+                page={page}
+                totalPages={pagination.totalPages}
+                onChange={setPage}
+              />
             </div>
           )}
         </div>
       </div>
 
-      {/* Add Customer Modal */}
+      {/* QUICK CUSTOMER PROFILE MODAL */}
+      {selectedCustomer && (
+        <Modal
+          open={!!selectedCustomer}
+          onClose={() => setSelectedCustomer(null)}
+          title={`Customer Record: ${selectedCustomer.name || selectedCustomer.customer}`}
+          footer={
+            <div className="flex justify-between items-center w-full">
+              <span className="text-xs text-text-muted font-mono">
+                ID: {selectedCustomer.customerId || selectedCustomer._id}
+              </span>
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={() => setSelectedCustomer(null)}>
+                  Close
+                </Button>
+                <Button
+                  icon={Sparkles}
+                  onClick={() => {
+                    const custId = selectedCustomer.customerId || selectedCustomer._id || ''
+                    const name = selectedCustomer.name || selectedCustomer.customer || ''
+                    const phone = selectedCustomer.phoneNumber || selectedCustomer.phone || ''
+                    setSelectedCustomer(null)
+                    navigate(`/dispatcher/manual-booking?customerId=${encodeURIComponent(custId)}&name=${encodeURIComponent(name)}&phone=${encodeURIComponent(phone)}`)
+                  }}
+                >
+                  Book Ride
+                </Button>
+              </div>
+            </div>
+          }
+        >
+          <div className="space-y-4 text-xs max-h-[70vh] overflow-y-auto pr-1">
+            {/* Header / Profile Card */}
+            <div className="bg-surface p-3.5 rounded-xl border border-border-subtle flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-taxi-500/20 to-amber-500/10 border border-taxi-500/30 text-taxi-500 flex items-center justify-center font-bold text-base">
+                  {(selectedCustomer.name || selectedCustomer.customer || 'C').charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-text-primary">
+                    {selectedCustomer.name || selectedCustomer.customer}
+                  </h3>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <StatusBadge status={getCustomerStatus(selectedCustomer)} />
+                    <span className="text-[10px] text-text-muted font-mono">
+                      Joined: {formatDate(selectedCustomer.joinedAt || selectedCustomer.createdAt)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Contact Details Card */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-1.5">
+                <span className="text-[10px] font-bold uppercase text-text-muted flex items-center gap-1">
+                  <Phone size={11} className="text-taxi-500" /> Phone Number
+                </span>
+                <p className="font-semibold text-text-primary text-xs">
+                  {selectedCustomer.phoneNumber || selectedCustomer.phone || '—'}
+                </p>
+                {(selectedCustomer.phoneNumber || selectedCustomer.phone) && (
+                  <a
+                    href={`tel:${selectedCustomer.phoneNumber || selectedCustomer.phone}`}
+                    className="text-[10px] text-taxi-500 hover:underline block"
+                  >
+                    Click to initiate call
+                  </a>
+                )}
+              </div>
+
+              <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-1.5">
+                <span className="text-[10px] font-bold uppercase text-text-muted flex items-center gap-1">
+                  <Mail size={11} className="text-taxi-500" /> Email Address
+                </span>
+                <p className="font-semibold text-text-primary text-xs truncate">
+                  {selectedCustomer.email || '—'}
+                </p>
+                {selectedCustomer.email && (
+                  <a
+                    href={`mailto:${selectedCustomer.email}`}
+                    className="text-[10px] text-taxi-500 hover:underline block"
+                  >
+                    Send email
+                  </a>
+                )}
+              </div>
+            </div>
+
+            {/* Ride Activity KPI Stats */}
+            <div className="grid grid-cols-3 gap-2 bg-surface p-3.5 rounded-xl border border-border-subtle text-center">
+              <div>
+                <span className="text-[10px] text-text-muted block">Total Rides</span>
+                <p className="text-base font-bold text-text-primary mt-0.5">
+                  {selectedCustomer.totalTrips ?? selectedCustomer.trips ?? 0}
+                </p>
+              </div>
+              <div>
+                <span className="text-[10px] text-text-muted block">Completed</span>
+                <p className="text-base font-bold text-emerald-500 mt-0.5">
+                  {selectedCustomer.completedTrips ?? 0}
+                </p>
+              </div>
+              <div>
+                <span className="text-[10px] text-text-muted block">Cancelled</span>
+                <p className="text-base font-bold text-rose-500 mt-0.5">
+                  {selectedCustomer.cancelledTrips ?? 0}
+                </p>
+              </div>
+            </div>
+
+            {/* Last Trip Details Card */}
+            <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-2.5">
+              <span className="text-[10px] font-bold uppercase text-text-muted flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <Car size={11} className="text-taxi-500" /> Recent Trip Activity
+                </span>
+                {selectedCustomer.lastTripDetails?.rideId && (
+                  <button
+                    onClick={() => {
+                      const rideId = selectedCustomer.lastTripDetails.rideId
+                      setSelectedCustomer(null)
+                      navigate(`/dispatcher/trip-details?tripId=${encodeURIComponent(rideId)}`)
+                    }}
+                    className="text-taxi-500 hover:underline flex items-center gap-1 font-semibold text-[10px]"
+                  >
+                    <span>View Trip</span>
+                    <ExternalLink size={9} />
+                  </button>
+                )}
+              </span>
+
+              {selectedCustomer.lastTripDetails ? (
+                <div className="space-y-2 pt-1 border-t border-border-subtle/60 text-xs">
+                  <div className="flex justify-between items-center">
+                    <span className="text-text-muted text-[11px]">
+                      Date: <strong>{formatDateTime(selectedCustomer.lastTripDetails.date)}</strong>
+                    </span>
+                    <span className="text-sm font-bold text-emerald-500">
+                      {selectedCustomer.currency || '$'}{selectedCustomer.lastTripDetails.fare ?? 0}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1 bg-surface-raised p-2.5 rounded-lg border border-border-subtle text-[11px]">
+                    <div className="flex items-start gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1 shrink-0" />
+                      <div>
+                        <span className="text-[9px] text-text-muted uppercase block font-semibold">Pickup</span>
+                        <p className="text-text-primary">{selectedCustomer.lastTripDetails.pickup || 'Pickup location'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-1.5 pt-1 border-t border-border-subtle/50">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1 shrink-0" />
+                      <div>
+                        <span className="text-[9px] text-text-muted uppercase block font-semibold">Dropoff</span>
+                        <p className="text-text-primary">{selectedCustomer.lastTripDetails.dropoff || 'Dropoff location'}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {selectedCustomer.lastTripDetails.status && (
+                    <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
+                      <span>Status:</span>
+                      <span className="font-semibold text-text-primary uppercase">
+                        {selectedCustomer.lastTripDetails.status.replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-text-muted py-2 text-center text-xs">
+                  {selectedCustomer.lastTrip && selectedCustomer.lastTrip !== '-'
+                    ? `Last active: ${selectedCustomer.lastTrip}`
+                    : 'No trip records found for this customer.'}
+                </p>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ADD CUSTOMER MODAL */}
       <Modal
-        open={showModal}
-        onClose={closeModal}
+        open={showAddModal}
+        onClose={() => {
+          if (!submitting) {
+            setShowAddModal(false)
+            setErrorMsg('')
+          }
+        }}
         title="Register New Customer"
         footer={
           <>
             <Button
               variant="secondary"
-              onClick={closeModal}
+              onClick={() => {
+                setShowAddModal(false)
+                setErrorMsg('')
+              }}
               disabled={submitting}
             >
               Cancel
@@ -651,7 +876,7 @@ export default function Customers() {
           {errorMsg && (
             <div
               role="alert"
-              className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-signal-red flex items-center gap-2"
+              className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-rose-500 flex items-center gap-2"
             >
               <AlertCircle size={14} className="shrink-0" />
               <span>{errorMsg}</span>

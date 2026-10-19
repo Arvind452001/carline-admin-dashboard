@@ -68,6 +68,7 @@ export const ROLE_NAV = {
     { key: 'vehicles', label: 'Vehicles', icon: 'Car' },
     { key: 'documents', label: 'Documents', icon: 'FileText' },
     { key: 'performance', label: 'Performance', icon: 'Gauge' },
+    { key: 'waiting-charges', label: 'Waiting Charges', icon: 'Clock' },
   ],
   [ROLES.CUSTOMER_SERVICE]: [
     { key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },

@@ -16,7 +16,8 @@ const MAPS = {
 }
 
 export default function StatusBadge({ status }) {
-  const entry = MAPS[status] || { label: status, tone: 'slate' }
+  const normalized = typeof status === 'string' ? status.trim() : ''
+  const entry = MAPS[normalized] || MAPS[normalized.toLowerCase()] || { label: status, tone: 'slate' }
   return (
     <Badge tone={entry.tone} dot>
       {entry.label}

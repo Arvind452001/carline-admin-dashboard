@@ -121,13 +121,20 @@ export default function LiveDriverMap({ height = 520 }) {
       const headers = {}
       if (token) headers['Authorization'] = `Bearer ${token}`
 
-      const res = await fetch(`${baseUrl}/company/customers/live-map`, { headers })
+      let res = await fetch(`${baseUrl}/dispatcher/live-map`, { headers })
+      if (!res.ok) {
+        res = await fetch(`${baseUrl}/company/trips/live-map`, { headers })
+      }
+      if (!res.ok) {
+        res = await fetch(`${baseUrl}/company/customers/live-map`, { headers })
+      }
       const json = await res.json()
 
-      if (res.ok && json?.success && json?.data) {
-        setDrivers(json.data.drivers || [])
-        if (json.data.summary) setSummary(json.data.summary)
-        if (json.data.company?.id) setCompanyId(json.data.company.id)
+      if (res.ok && (json?.success || json?.statusCode === 200 || json?.data)) {
+        const data = json.data || json
+        setDrivers(data.drivers || (Array.isArray(data) ? data : []))
+        if (data.summary) setSummary(data.summary)
+        if (data.company?.id) setCompanyId(data.company.id)
       }
     } catch (err) {
       console.warn('Failed to load live map data:', err)

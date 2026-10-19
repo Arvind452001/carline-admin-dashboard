@@ -1,20 +1,37 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { 
   Search, Clock, Car, Sparkles, UserCheck, XCircle, 
-  RefreshCw, CheckCircle2, AlertCircle, Phone, MapPin, Navigation, User, X, Check
+  RefreshCw, CheckCircle2, AlertCircle, Phone, Mail, User, X,
+  ExternalLink, Eye, Route, Receipt
 } from 'lucide-react'
 import PageLayout from '@/layouts/PageLayout'
 import Input from '@/shared/components/Input'
 import Select from '@/shared/components/Select'
 import Table from '@/shared/components/Table'
-import StatusBadge from '@/shared/components/StatusBadge'
 import Pagination from '@/shared/components/Pagination'
 import Modal from '@/shared/components/Modal'
 import Button from '@/shared/components/Button'
 import { usePagination } from '@/shared/hooks/usePagination'
 import { useAuthStore } from '@/store/authStore'
 
+function formatDate(isoStr) {
+  if (!isoStr) return '—'
+  try {
+    const d = new Date(isoStr)
+    return d.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  } catch {
+    return String(isoStr)
+  }
+}
+
 export default function PendingTrips() {
+  const navigate = useNavigate()
   const token = useAuthStore((s) => s.token)
   const [trips, setTrips] = useState([])
   const [drivers, setDrivers] = useState([])
@@ -34,6 +51,7 @@ export default function PendingTrips() {
   const [selectedDriverId, setSelectedDriverId] = useState('')
   const [cancelModalTrip, setCancelModalTrip] = useState(null)
   const [cancelReason, setCancelReason] = useState('Customer requested cancellation')
+  const [detailsModalTrip, setDetailsModalTrip] = useState(null)
 
   const baseUrl = import.meta.env.VITE_API_BASE_URL || 'https://node.aitechnotech.in/carlinee/api/v1'
 
@@ -58,30 +76,143 @@ export default function PendingTrips() {
       const headers = {}
       if (token) headers['Authorization'] = `Bearer ${token}`
 
-      const [tripsRes, mapRes] = await Promise.all([
-        fetch(`${baseUrl}/company/trips?status=Pending&limit=50`, { headers }),
-        fetch(`${baseUrl}/company/trips/live-map`, { headers })
-      ])
+      // Fetch pending trips & live map for drivers
+      let tripsRes = await fetch(`${baseUrl}/company/trips?status=Pending&limit=50`, { headers })
+      if (!tripsRes.ok) {
+        tripsRes = await fetch(`${baseUrl}/dispatcher/pending-trips`, { headers })
+      }
+
+      const mapRes = await fetch(`${baseUrl}/company/trips/live-map`, { headers })
 
       const tripsJson = await tripsRes.json()
       const mapJson = await mapRes.json()
-      console.log(tripsJson,mapJson)
-      if (tripsJson?.status === 200 || tripsJson?.statusCode === 200 || tripsJson?.data?.trips) {
-        const rawTrips = tripsJson?.data?.trips || tripsJson?.data || []
-        const formatted = rawTrips.map((t) => ({
-          id: t.id || t._id,
-          tripId: t.tripId || `TRP-${(t.id || t._id).toString().slice(-4).toUpperCase()}`,
-          customer: t.customer?.name || 'Customer',
-          customerPhone: t.customer?.phone || '',
-          pickup: t.pickup?.address || 'Pickup Point',
-          dest: t.dropoff?.address || 'Destination',
-          time: t.createdAt ? new Date(t.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '10:30 AM',
-          priority: t.distanceKm > 20 ? 'High' : 'Normal',
-          vehicle: t.driver?.vehicleType || t.vehicleTypeName || 'Sedan Comfort',
-          fare: t.fare?.displayFare ? String(t.fare.displayFare).replace(/₹/g, () => '$') : `$${t.fare?.amount || t.payableFare || 0}`,
-          status: t.status || 'Pending',
-          rawTrip: t
-        }))
+
+      if (tripsJson?.status === 200 || tripsJson?.statusCode === 200 || tripsJson?.data?.trips || tripsJson?.success) {
+        const rawTrips = tripsJson?.data?.trips || (Array.isArray(tripsJson?.data) ? tripsJson.data : [])
+        
+        const formatted = rawTrips.map((t) => {
+          // Robust ID extraction
+          const rawId = t._id || t.id
+          const tripCode = t.tripId || (typeof t.id === 'string' && t.id.startsWith('TRP-') ? t.id : `TRP-${String(rawId).slice(-4).toUpperCase()}`)
+
+          // Customer parsing (handles string or object or customerDetails)
+          const custName = 
+            (typeof t.customer === 'string' ? t.customer : t.customer?.name) ||
+            t.customerDetails?.name ||
+            t.customerName ||
+            'Customer'
+
+          const custPhone = 
+            t.customerDetails?.phone ||
+            (typeof t.customer === 'object' ? t.customer?.phone : '') ||
+            t.customerPhone ||
+            ''
+
+          const custEmail = 
+            t.customerDetails?.email ||
+            (typeof t.customer === 'object' ? t.customer?.email : '') ||
+            ''
+
+          // Driver parsing (handles string or object or driverDetails)
+          const drvName = 
+            (typeof t.driver === 'string' ? t.driver : t.driver?.name) ||
+            t.driverDetails?.name ||
+            t.driverName ||
+            ''
+
+          const drvPhone = 
+            t.driverDetails?.phone ||
+            (typeof t.driver === 'object' ? t.driver?.phone : '') ||
+            ''
+
+          const drvVehicle = 
+            t.driverDetails?.vehicleType ||
+            t.vehicle ||
+            (typeof t.driver === 'object' ? t.driver?.vehicleType : '') ||
+            t.vehicleTypeName ||
+            'Standard'
+
+          const drvPlate = 
+            t.driverDetails?.plate ||
+            (typeof t.driver === 'object' ? t.driver?.plate || t.driver?.vehicleRegistrationNumber : '') ||
+            ''
+
+          // Pickup parsing (handles string or object or pickupLocation)
+          const pickupAddr = 
+            (typeof t.pickup === 'string' ? t.pickup : t.pickup?.address) ||
+            t.pickupAddress ||
+            t.pickupLocation?.address ||
+            'Pickup Location'
+
+          const pickupLat = t.pickupLocation?.latitude ?? t.pickup?.latitude ?? 0
+          const pickupLng = t.pickupLocation?.longitude ?? t.pickup?.longitude ?? 0
+
+          // Dropoff parsing (handles string or object or dropoffLocation or dest)
+          const dropoffAddr = 
+            (typeof t.dropoff === 'string' ? t.dropoff : t.dropoff?.address) ||
+            t.dest ||
+            t.dropoffAddress ||
+            t.dropoffLocation?.address ||
+            'Destination'
+
+          const dropoffLat = t.dropoffLocation?.latitude ?? t.dropoff?.latitude ?? 0
+          const dropoffLng = t.dropoffLocation?.longitude ?? t.dropoff?.longitude ?? 0
+
+          // Fare parsing (handles number, displayFare, or fareDetails)
+          const fareDisplay = 
+            t.displayFare ||
+            t.fareDetails?.displayFare ||
+            (typeof t.fare === 'string' ? t.fare : '') ||
+            (typeof t.fare === 'number' ? `$${t.fare}` : t.fare?.displayFare || `$${t.fare?.amount || t.fareDetails?.amount || 0}`) ||
+            '$0'
+
+          const fareNum = typeof t.fare === 'number' ? t.fare : (t.fareDetails?.amount ?? t.fare?.amount ?? 0)
+
+          // Time formatting
+          const timeDisplay = 
+            t.time ||
+            t.scheduledFor ||
+            (t.scheduledAt ? new Date(t.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '') ||
+            (t.createdAt ? new Date(t.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '10:30 AM')
+
+          // Status & Priority
+          const statusText = t.statusLabel || t.status || t.rawStatus || 'Pending'
+          const distKm = Number(t.distanceKm || t.fareDetails?.breakdown?.distanceKm) || 0
+          const priority = distKm > 20 ? 'High' : 'Normal'
+
+          return {
+            id: String(rawId),
+            tripId: tripCode,
+            customer: custName,
+            customerPhone: custPhone,
+            customerEmail: custEmail,
+            customerDetails: t.customerDetails,
+            driver: drvName,
+            driverPhone: drvPhone,
+            driverVehicle: drvVehicle,
+            driverPlate: drvPlate,
+            driverDetails: t.driverDetails,
+            pickup: pickupAddr,
+            pickupLat,
+            pickupLng,
+            dest: dropoffAddr,
+            dropoffLat,
+            dropoffLng,
+            time: timeDisplay,
+            scheduledAt: t.scheduledAt,
+            createdAt: t.createdAt,
+            priority,
+            vehicle: drvVehicle,
+            fare: fareDisplay,
+            fareAmount: fareNum,
+            fareDetails: t.fareDetails || t.fare,
+            status: statusText,
+            rawStatus: t.rawStatus,
+            company: t.company,
+            distanceKm: distKm,
+            rawTrip: t
+          }
+        })
         setTrips(formatted)
       }
 
@@ -103,7 +234,6 @@ export default function PendingTrips() {
     const interval = setInterval(fetchPendingTrips, 15000)
     return () => clearInterval(interval)
   }, [token])
-
 
   // Auto select first driver when assign modal opens or drivers list updates
   useEffect(() => {
@@ -148,12 +278,11 @@ export default function PendingTrips() {
     }
     return [
       ...defaultOptions,
+      { value: 'VIP Executive', label: 'VIP Executive (4 Seats)' },
       { value: 'Sedan Comfort', label: 'Sedan Comfort (4 Seats)' },
       { value: 'SUV 6-Seater', label: 'SUV 6-Seater (6 Seats)' },
       { value: 'Eco EV Green', label: 'Eco EV Green (4 Seats)' },
-      { value: 'VIP Executive', label: 'VIP Executive (4 Seats)' },
-      { value: 'Van 8-Seater XL', label: 'Van 8-Seater XL (8 Seats)' },
-      { value: 'Wheelchair Accessible (WAV)', label: 'Wheelchair Accessible' }
+      { value: 'Van 8-Seater XL', label: 'Van 8-Seater XL (8 Seats)' }
     ]
   }, [vehicleTypes])
 
@@ -161,6 +290,8 @@ export default function PendingTrips() {
     return trips.filter((t) => {
       const matchesSearch =
         t.customer.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.customerPhone.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.driver.toLowerCase().includes(searchQuery.toLowerCase()) ||
         t.pickup.toLowerCase().includes(searchQuery.toLowerCase()) ||
         t.dest.toLowerCase().includes(searchQuery.toLowerCase()) ||
         t.tripId.toLowerCase().includes(searchQuery.toLowerCase())
@@ -177,7 +308,7 @@ export default function PendingTrips() {
 
   const { page, setPage, totalPages, pageItems } = usePagination(filteredTrips, 10)
 
-  // Auto Assign Handler (POST /company/trips/:id/auto-assign)
+  // Auto Assign Handler
   const handleAutoAssign = async (trip) => {
     try {
       setActionLoading(true)
@@ -207,7 +338,7 @@ export default function PendingTrips() {
     }
   }
 
-  // Manual Assign Handler (POST /company/trips/:id/assign-driver)
+  // Manual Assign Handler
   const handleManualAssign = async () => {
     if (!selectedDriverId || !assignModalTrip) return
     try {
@@ -241,7 +372,7 @@ export default function PendingTrips() {
     }
   }
 
-  // Cancel Handler (POST & DELETE /company/trips/:id/cancel or /company/trips/:id)
+  // Cancel Handler
   const handleCancelTrip = async () => {
     if (!cancelModalTrip) return
     try {
@@ -267,7 +398,7 @@ export default function PendingTrips() {
 
       const json = await res.json()
       if (json?.status === 200 || json?.statusCode === 200 || json?.success) {
-        setSuccessMsg(`Trip ${cancelModalTrip.tripId} cancelled/deleted successfully.`)
+        setSuccessMsg(`Trip ${cancelModalTrip.tripId} cancelled successfully.`)
         setCancelModalTrip(null)
         fetchPendingTrips()
       } else {
@@ -286,9 +417,11 @@ export default function PendingTrips() {
       key: 'tripId', 
       label: 'TRIP ID', 
       render: (r) => (
-        <div>
-          <span className="font-bold text-text-primary text-xs">{r.tripId}</span>
-          <p className="text-[10px] text-taxi-500 font-semibold">{r.fare}</p>
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-1.5">
+            <span className="font-bold text-text-primary text-xs">{r.tripId}</span>
+          </div>
+          <p className="text-[11px] text-taxi-500 font-bold">{r.fare}</p>
         </div>
       ) 
     },
@@ -297,57 +430,80 @@ export default function PendingTrips() {
       label: 'CUSTOMER', 
       render: (r) => (
         <div>
-          <p className="font-semibold text-text-primary text-xs">{r.customer}</p>
-          {r.customerPhone && <p className="text-[10px] text-text-muted">{r.customerPhone}</p>}
+          <p className="font-semibold text-text-primary text-xs flex items-center gap-1">
+            <User size={11} className="text-taxi-500 shrink-0" />
+            <span className="truncate max-w-[130px]">{r.customer}</span>
+          </p>
+          {r.customerPhone && (
+            <p className="text-[10px] text-text-muted flex items-center gap-1 mt-0.5">
+              <Phone size={9} /> {r.customerPhone}
+            </p>
+          )}
+        </div>
+      ) 
+    },
+    {
+      key: 'driver',
+      label: 'ASSIGNED DRIVER',
+      render: (r) => (
+        <div>
+          {r.driver ? (
+            <div>
+              <p className="font-semibold text-text-primary text-xs flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                <span className="truncate max-w-[120px]">{r.driver}</span>
+              </p>
+              <p className="text-[10px] text-text-muted truncate max-w-[120px]">
+                {r.driverPlate ? `Plate: ${r.driverPlate}` : r.driverVehicle}
+              </p>
+            </div>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+              Unassigned
+            </span>
+          )}
+        </div>
+      )
+    },
+    { 
+      key: 'pickup', 
+      label: 'ROUTE (PICKUP → DESTINATION)', 
+      render: (r) => (
+        <div className="text-xs space-y-1 max-w-[200px]">
+          <div className="flex items-start gap-1.5 text-text-secondary">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1 shrink-0" />
+            <span className="line-clamp-1" title={r.pickup}>{r.pickup}</span>
+          </div>
+          <div className="flex items-start gap-1.5 text-text-secondary">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1 shrink-0" />
+            <span className="line-clamp-1" title={r.dest}>{r.dest}</span>
+          </div>
         </div>
       ) 
     },
     { 
-      key: 'pickup', 
-      label: 'PICKUP', 
-      render: (r) => (
-        <span className="text-xs text-text-secondary line-clamp-1 max-w-[150px]" title={r.pickup}>
-          {r.pickup}
-        </span>
-      ) 
-    },
-    { 
-      key: 'dest', 
-      label: 'DESTINATION', 
-      render: (r) => (
-        <span className="text-xs text-text-secondary line-clamp-1 max-w-[150px]" title={r.dest}>
-          {r.dest}
-        </span>
-      ) 
-    },
-    { 
       key: 'time', 
-      label: 'REQUESTED TIME', 
+      label: 'TIME / SCHEDULE', 
       render: (r) => (
-        <span className="flex items-center gap-1 text-xs text-text-secondary">
-          <Clock size={12} className="text-text-muted" /> {r.time}
-        </span>
-      ) 
-    },
-    { 
-      key: 'priority', 
-      label: 'PRIORITY', 
-      render: (r) => (
-        <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ring-1 ring-inset ${
-          r.priority === 'High' 
-            ? 'bg-rose-500/10 text-rose-500 ring-rose-500/20' 
-            : 'bg-slate-500/10 text-text-secondary ring-slate-500/20'
-        }`}>
-          {r.priority}
-        </span>
+        <div className="text-xs space-y-0.5">
+          <span className="flex items-center gap-1 font-medium text-text-primary">
+            <Clock size={11} className="text-text-muted" /> {r.time}
+          </span>
+          {r.scheduledAt && (
+            <p className="text-[10px] text-text-muted">
+              {formatDate(r.scheduledAt)}
+            </p>
+          )}
+        </div>
       ) 
     },
     { 
       key: 'vehicle', 
       label: 'VEHICLE TYPE', 
       render: (r) => (
-        <span className="flex items-center gap-1.5 text-xs text-text-primary font-medium">
-          <Car size={13} className="text-taxi-500" /> {r.vehicle}
+        <span className="flex items-center gap-1 text-xs text-text-primary font-medium">
+          <Car size={13} className="text-taxi-500 shrink-0" /> {r.vehicle}
         </span>
       ) 
     },
@@ -355,7 +511,13 @@ export default function PendingTrips() {
       key: 'status', 
       label: 'STATUS', 
       render: (r) => (
-        <span className="text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2 py-0.5 rounded font-bold uppercase">
+        <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase border ${
+          String(r.status).toLowerCase().includes('sched')
+            ? 'bg-indigo-500/15 text-indigo-500 border-indigo-500/30'
+            : String(r.status).toLowerCase().includes('search')
+            ? 'bg-amber-500/15 text-amber-500 border-amber-500/30'
+            : 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30'
+        }`}>
           {r.status}
         </span>
       ) 
@@ -364,38 +526,55 @@ export default function PendingTrips() {
       key: 'actions',
       label: 'ACTIONS',
       render: (r) => (
-        <div className="flex items-center gap-2">
-          {/* Sleek Auto Assign Button */}
+        <div className="flex items-center gap-1.5">
+          {/* Quick Details Modal Button */}
+          <button
+            onClick={() => setDetailsModalTrip(r)}
+            className="p-1.5 rounded-lg bg-surface hover:bg-surface-hover border border-border-strong text-text-secondary hover:text-text-primary transition-all"
+            title="View full trip record"
+          >
+            <Eye size={13} />
+          </button>
+
+          {/* Dedicated Page Link */}
+          <button
+            onClick={() => navigate(`/dispatcher/trip-details?tripId=${r.id}`)}
+            className="p-1.5 rounded-lg bg-surface hover:bg-surface-hover border border-border-strong text-text-secondary hover:text-taxi-500 transition-all"
+            title="Open Dedicated Trip Page"
+          >
+            <ExternalLink size={13} />
+          </button>
+
+          {/* Auto Assign Button */}
           <button
             onClick={() => handleAutoAssign(r)}
             disabled={actionLoading}
             className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-xs font-semibold shadow-sm flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
             title="Auto assign nearest available company driver"
           >
-            <Sparkles size={13} className="text-amber-100" />
+            <Sparkles size={12} />
             <span>Auto</span>
           </button>
 
-          {/* Sleek Manual Assign Button */}
+          {/* Manual Assign Button */}
           <button
             onClick={() => openAssignModal(r)}
             disabled={actionLoading}
             className="px-2.5 py-1.5 rounded-lg bg-surface hover:bg-surface-hover border border-border-strong text-text-primary text-xs font-semibold flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
             title="Manually select company driver"
           >
-            <UserCheck size={13} className="text-taxi-500" />
+            <UserCheck size={12} className="text-taxi-500" />
             <span>Assign</span>
           </button>
 
-          {/* Sleek Cancel Button */}
+          {/* Cancel Button */}
           <button
             onClick={() => setCancelModalTrip(r)}
             disabled={actionLoading}
-            className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-500 text-xs font-semibold flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
-            title="Cancel this pending booking"
+            className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-500 transition-all active:scale-95 disabled:opacity-50"
+            title="Cancel this booking"
           >
-            <XCircle size={13} />
-            <span>Cancel</span>
+            <XCircle size={14} />
           </button>
         </div>
       )
@@ -406,6 +585,11 @@ export default function PendingTrips() {
     <PageLayout
       title="Pending Trips"
       description="Review rides awaiting dispatch, trigger auto driver matching, or manually assign drivers."
+      actions={
+        <Button variant="secondary" icon={RefreshCw} onClick={fetchPendingTrips} disabled={loading}>
+          {loading ? 'Refreshing...' : 'Refresh'}
+        </Button>
+      }
     >
       {/* Top Banner Notifications */}
       {successMsg && (
@@ -442,25 +626,25 @@ export default function PendingTrips() {
 
         <div className="glass-card p-4 rounded-2xl flex items-center justify-between">
           <div>
-            <p className="text-xs text-text-muted">High Priority Requests</p>
-            <h3 className="text-xl font-bold text-rose-500 mt-1">
-              {trips.filter(t => t.priority === 'High').length}
+            <p className="text-xs text-text-muted">Assigned Drivers</p>
+            <h3 className="text-xl font-bold text-emerald-500 mt-1">
+              {trips.filter(t => t.driver).length}
             </h3>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-rose-500/10 text-rose-500 flex items-center justify-center">
-            <Sparkles size={20} />
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+            <UserCheck size={20} />
           </div>
         </div>
 
         <div className="glass-card p-4 rounded-2xl flex items-center justify-between">
           <div>
-            <p className="text-xs text-text-muted">Available Company Drivers</p>
-            <h3 className="text-xl font-bold text-emerald-500 mt-1">
-              {drivers.filter(d => d.status === 'AVAILABLE' || d.status === 'ACTIVE').length || drivers.length}
+            <p className="text-xs text-text-muted">Active Fleet Drivers</p>
+            <h3 className="text-xl font-bold text-blue-500 mt-1">
+              {drivers.length}
             </h3>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
-            <UserCheck size={20} />
+          <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center">
+            <Car size={20} />
           </div>
         </div>
       </div>
@@ -496,14 +680,6 @@ export default function PendingTrips() {
             options={vehicleOptions}
           />
         </div>
-        <button
-          onClick={fetchPendingTrips}
-          disabled={loading}
-          className="px-3.5 py-2 rounded-xl bg-surface border border-border-subtle hover:bg-surface-hover text-text-primary text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50"
-        >
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          Refresh
-        </button>
       </div>
 
       {/* Table & Pagination */}
@@ -513,6 +689,197 @@ export default function PendingTrips() {
           <Pagination page={page} totalPages={totalPages} onChange={setPage} />
         </div>
       </div>
+
+      {/* FULL RECORD DETAILS MODAL */}
+      {detailsModalTrip && (
+        <Modal
+          open={!!detailsModalTrip}
+          onClose={() => setDetailsModalTrip(null)}
+          title={`Trip Details: ${detailsModalTrip.tripId}`}
+          footer={
+            <div className="flex justify-between items-center w-full">
+              <span className="text-xs text-text-muted font-mono">
+                ID: {detailsModalTrip.id}
+              </span>
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={() => setDetailsModalTrip(null)}>
+                  Close
+                </Button>
+                <Button
+                  icon={ExternalLink}
+                  onClick={() => {
+                    const id = detailsModalTrip.id
+                    setDetailsModalTrip(null)
+                    navigate(`/dispatcher/trip-details?tripId=${id}`)
+                  }}
+                >
+                  Open Dedicated Page
+                </Button>
+              </div>
+            </div>
+          }
+        >
+          <div className="space-y-4 text-xs max-h-[70vh] overflow-y-auto pr-1">
+            {/* Header info */}
+            <div className="bg-surface p-3.5 rounded-xl border border-border-subtle flex justify-between items-center">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-text-primary">{detailsModalTrip.tripId}</h3>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                    {detailsModalTrip.status}
+                  </span>
+                </div>
+                <p className="text-text-muted text-[11px] mt-0.5">
+                  Company: <strong>{detailsModalTrip.company?.name || 'ABC Taxi'}</strong> ({detailsModalTrip.company?.code || 'CMP-003'})
+                </p>
+              </div>
+
+              <div className="text-right">
+                <span className="text-lg font-bold text-emerald-500">
+                  {detailsModalTrip.fare}
+                </span>
+                <span className="text-[10px] text-text-muted block uppercase">
+                  {detailsModalTrip.fareDetails?.paymentMethod || 'WALLET'} • {detailsModalTrip.fareDetails?.paymentStatus || 'PENDING'}
+                </span>
+              </div>
+            </div>
+
+            {/* People: Customer & Driver */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Customer Card */}
+              <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-2">
+                <span className="text-[10px] font-bold uppercase text-taxi-500 flex items-center gap-1">
+                  <User size={12} /> Passenger / Customer
+                </span>
+                <p className="text-sm font-bold text-text-primary">{detailsModalTrip.customer}</p>
+                {detailsModalTrip.customerPhone && (
+                  <p className="text-text-secondary flex items-center gap-1.5">
+                    <Phone size={12} />
+                    <a href={`tel:${detailsModalTrip.customerPhone}`} className="hover:underline text-taxi-500">
+                      {detailsModalTrip.customerPhone}
+                    </a>
+                  </p>
+                )}
+                {detailsModalTrip.customerEmail && (
+                  <p className="text-text-muted flex items-center gap-1.5 text-[11px]">
+                    <Mail size={12} />
+                    <a href={`mailto:${detailsModalTrip.customerEmail}`} className="hover:underline">
+                      {detailsModalTrip.customerEmail}
+                    </a>
+                  </p>
+                )}
+                {detailsModalTrip.customerDetails?.id && (
+                  <p className="text-[10px] text-text-muted font-mono pt-1">
+                    Customer ID: {detailsModalTrip.customerDetails.id}
+                  </p>
+                )}
+              </div>
+
+              {/* Driver Card */}
+              <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-2">
+                <span className="text-[10px] font-bold uppercase text-emerald-500 flex items-center gap-1">
+                  <Car size={12} /> Assigned Driver
+                </span>
+                {detailsModalTrip.driver ? (
+                  <>
+                    <p className="text-sm font-bold text-text-primary">{detailsModalTrip.driver}</p>
+                    {detailsModalTrip.driverPhone && (
+                      <p className="text-text-secondary flex items-center gap-1.5">
+                        <Phone size={12} />
+                        <a href={`tel:${detailsModalTrip.driverPhone}`} className="hover:underline text-emerald-500">
+                          {detailsModalTrip.driverPhone}
+                        </a>
+                      </p>
+                    )}
+                    <p className="text-[11px] text-text-muted">
+                      Vehicle: <strong className="text-text-primary">{detailsModalTrip.driverVehicle}</strong>
+                      {detailsModalTrip.driverPlate ? ` • ${detailsModalTrip.driverPlate}` : ''}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-text-muted py-2">No driver assigned yet.</p>
+                )}
+              </div>
+            </div>
+
+            {/* Route Details */}
+            <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-3">
+              <span className="text-[10px] font-bold uppercase text-text-secondary flex items-center gap-1">
+                <Route size={12} /> Route Details
+              </span>
+
+              <div className="space-y-2">
+                <div>
+                  <span className="text-[10px] text-emerald-600 font-bold block uppercase">Pickup:</span>
+                  <p className="text-text-primary font-medium">{detailsModalTrip.pickup}</p>
+                  {detailsModalTrip.pickupLat !== 0 && (
+                    <p className="text-[10px] text-text-muted font-mono mt-0.5">
+                      Coordinates: {detailsModalTrip.pickupLat}, {detailsModalTrip.pickupLng}
+                    </p>
+                  )}
+                </div>
+
+                <div className="pt-2 border-t border-border-subtle/50">
+                  <span className="text-[10px] text-rose-500 font-bold block uppercase">Dropoff Destination:</span>
+                  <p className="text-text-primary font-medium">{detailsModalTrip.dest}</p>
+                  {detailsModalTrip.dropoffLat !== 0 && (
+                    <p className="text-[10px] text-text-muted font-mono mt-0.5">
+                      Coordinates: {detailsModalTrip.dropoffLat}, {detailsModalTrip.dropoffLng}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Fare Breakdown (if available) */}
+            {detailsModalTrip.fareDetails?.breakdown && (
+              <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-2">
+                <span className="text-[10px] font-bold uppercase text-text-secondary flex items-center gap-1">
+                  <Receipt size={12} /> Fare Calculation
+                </span>
+                <div className="space-y-1.5 text-[11px]">
+                  <div className="flex justify-between text-text-secondary">
+                    <span>Base Price</span>
+                    <span className="font-semibold text-text-primary">${detailsModalTrip.fareDetails.breakdown.basePrice}</span>
+                  </div>
+                  {detailsModalTrip.fareDetails.breakdown.distanceRate > 0 && (
+                    <div className="flex justify-between text-text-secondary">
+                      <span>Distance Charge ({detailsModalTrip.fareDetails.breakdown.distanceKm} km @ ${detailsModalTrip.fareDetails.breakdown.perKmRate}/km)</span>
+                      <span className="font-semibold text-text-primary">${detailsModalTrip.fareDetails.breakdown.distanceRate}</span>
+                    </div>
+                  )}
+                  {detailsModalTrip.fareDetails.breakdown.timeRate > 0 && (
+                    <div className="flex justify-between text-text-secondary">
+                      <span>Time Charge ({detailsModalTrip.fareDetails.breakdown.durationMinutes} min @ ${detailsModalTrip.fareDetails.breakdown.perMinuteRate}/min)</span>
+                      <span className="font-semibold text-text-primary">${detailsModalTrip.fareDetails.breakdown.timeRate}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between font-bold text-text-primary pt-1 border-t border-border-subtle/50">
+                    <span>Payable Total</span>
+                    <span className="text-emerald-500">${detailsModalTrip.fareDetails.breakdown.payableFare || detailsModalTrip.fareDetails.amount}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Timestamps */}
+            <div className="bg-surface p-3.5 rounded-xl border border-border-subtle grid grid-cols-2 gap-3 text-center">
+              <div>
+                <span className="text-[10px] text-text-muted block">Requested / Scheduled</span>
+                <p className="font-bold text-text-primary mt-0.5">
+                  {detailsModalTrip.scheduledAt ? formatDate(detailsModalTrip.scheduledAt) : detailsModalTrip.time}
+                </p>
+              </div>
+              <div>
+                <span className="text-[10px] text-text-muted block">Created At</span>
+                <p className="font-bold text-text-primary mt-0.5">
+                  {detailsModalTrip.createdAt ? formatDate(detailsModalTrip.createdAt) : '—'}
+                </p>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* Manual Assign Driver Modal */}
       {assignModalTrip && (

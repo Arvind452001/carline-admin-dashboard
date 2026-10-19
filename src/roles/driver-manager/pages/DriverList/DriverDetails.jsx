@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, Award, FileText, RefreshCw, ShieldCheck, ShieldOff, User, XCircle } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Award, Car, FileText, RefreshCw, ShieldCheck, ShieldOff, User, XCircle } from 'lucide-react'
 import PageLayout from '@/layouts/PageLayout'
 import Button from '@/shared/components/Button'
 import Badge from '@/shared/components/Badge'
@@ -10,6 +10,7 @@ import Loading from '@/shared/components/Loading'
 import ErrorState from '@/shared/components/ErrorState'
 import ImageLightbox from '@/shared/components/ImageLightbox'
 import RejectDriverModal from '@/roles/driver-manager/components/RejectDriverModal'
+import AssignVehicleTypeModal from '@/roles/driver-manager/components/AssignVehicleTypeModal'
 import { isImageUpload } from '@/shared/services/apiClient'
 import { formatDate, formatDateTime } from '@/shared/utils/date'
 import {
@@ -132,6 +133,7 @@ export default function DriverDetails() {
   const [actionError, setActionError] = useState(null)
   const [preview, setPreview] = useState(null)
   const [rejectOpen, setRejectOpen] = useState(false)
+  const [assignVehicleOpen, setAssignVehicleOpen] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -367,6 +369,12 @@ export default function DriverDetails() {
 
         {activeTab === 'Vehicle' && (
           <Card title="Vehicle">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-xs text-text-muted">Vehicle specifications and assigned class</span>
+              <Button size="xs" variant="secondary" icon={Car} onClick={() => setAssignVehicleOpen(true)}>
+                Change Vehicle Class
+              </Button>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
               <Field label="Vehicle type">{show(driver.vehicleType)}</Field>
               <Field label="Registration number">{show(driver.plate)}</Field>
@@ -434,6 +442,13 @@ export default function DriverDetails() {
         driver={driver}
         onClose={() => setRejectOpen(false)}
         onConfirm={rejectDriver}
+      />
+
+      <AssignVehicleTypeModal
+        open={assignVehicleOpen}
+        driver={driver}
+        onClose={() => setAssignVehicleOpen(false)}
+        onSuccess={() => load()}
       />
     </PageLayout>
   )

@@ -1,6 +1,25 @@
-import { useState, useEffect, useRef } from 'react'
-import { MapPin, Navigation, User, Car, Coins, Clock, RefreshCw, Phone, AlertCircle } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
+import {
+  MapPin,
+  Navigation,
+  User,
+  Car,
+  Clock,
+  RefreshCw,
+  Phone,
+  Mail,
+  AlertCircle,
+  Search,
+  ExternalLink,
+  Star,
+  Eye,
+  Route,
+  Receipt
+} from 'lucide-react'
 import PageLayout from '@/layouts/PageLayout'
+import Button from '@/shared/components/Button'
+import Modal from '@/shared/components/Modal'
 import { useAuthStore } from '@/store/authStore'
 
 const GOOGLE_MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyChjFXyiis_jicX6u-zKHVxqqMY0GtLPKc'
@@ -34,7 +53,6 @@ function loadGoogleMaps() {
   return scriptPromise
 }
 
-// Rapido/Uber Style Car Marker Icon
 function getUberCarIcon(maps) {
   const svgStr = `
     <svg xmlns="http://www.w3.org/2000/svg" width="46" height="46" viewBox="0 0 46 46">
@@ -46,7 +64,7 @@ function getUberCarIcon(maps) {
         <circle fill="#ffffff" cx="16.5" cy="14.5" r="1.5"/>
       </g>
     </svg>
-  `;
+  `
   return {
     url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svgStr),
     scaledSize: new maps.Size(46, 46),
@@ -54,7 +72,6 @@ function getUberCarIcon(maps) {
   }
 }
 
-// Rapido/Uber Style Pickup Green Marker Icon
 function getUberPickupIcon(maps) {
   const svgStr = `
     <svg xmlns="http://www.w3.org/2000/svg" width="38" height="38" viewBox="0 0 38 38">
@@ -62,7 +79,7 @@ function getUberPickupIcon(maps) {
       <circle cx="19" cy="19" r="12" fill="#10B981" stroke="#ffffff" stroke-width="2.5"/>
       <circle cx="19" cy="19" r="4.5" fill="#ffffff"/>
     </svg>
-  `;
+  `
   return {
     url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svgStr),
     scaledSize: new maps.Size(38, 38),
@@ -70,7 +87,6 @@ function getUberPickupIcon(maps) {
   }
 }
 
-// Rapido/Uber Style Dropoff Red Marker Icon
 function getUberDropoffIcon(maps) {
   const svgStr = `
     <svg xmlns="http://www.w3.org/2000/svg" width="38" height="38" viewBox="0 0 38 38">
@@ -78,7 +94,7 @@ function getUberDropoffIcon(maps) {
       <rect x="10" y="10" width="18" height="18" rx="4" fill="#EF4444" stroke="#ffffff" stroke-width="2.5"/>
       <rect x="16" y="16" width="6" height="6" fill="#ffffff"/>
     </svg>
-  `;
+  `
   return {
     url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svgStr),
     scaledSize: new maps.Size(38, 38),
@@ -86,12 +102,52 @@ function getUberDropoffIcon(maps) {
   }
 }
 
+function formatDate(isoStr) {
+  if (!isoStr) return '—'
+  try {
+    const d = new Date(isoStr)
+    return d.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  } catch {
+    return String(isoStr)
+  }
+}
+
+function getStatusBadgeClass(status) {
+  const s = String(status || '').toUpperCase()
+  if (s.includes('DISPATCH') || s.includes('DRIVER_ASSIGNED')) {
+    return 'bg-blue-500/15 text-blue-500 border-blue-500/30'
+  }
+  if (s.includes('PROGRESS') || s.includes('STARTED') || s.includes('ONGOING')) {
+    return 'bg-purple-500/15 text-purple-500 border-purple-500/30'
+  }
+  if (s.includes('SEARCH')) {
+    return 'bg-amber-500/15 text-amber-500 border-amber-500/30'
+  }
+  if (s.includes('SCHEDULE')) {
+    return 'bg-indigo-500/15 text-indigo-500 border-indigo-500/30'
+  }
+  return 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30'
+}
+
 export default function LiveTrips() {
+  const navigate = useNavigate()
   const token = useAuthStore((s) => s.token)
   const [activeTrips, setActiveTrips] = useState([])
   const [selectedTrip, setSelectedTrip] = useState(null)
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState('')
+
+  // Search & Filter state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('ALL')
+
+  // Detailed Modal State
+  const [detailsModalTrip, setDetailsModalTrip] = useState(null)
 
   const mapContainerRef = useRef(null)
   const googleMapRef = useRef(null)
@@ -110,7 +166,7 @@ export default function LiveTrips() {
       const json = await res.json()
 
       if (json?.status === 200 || json?.statusCode === 200 || json?.success || json?.data?.trips) {
-        const trips = json?.data?.trips || json?.data || []
+        const trips = json?.data?.trips || (Array.isArray(json?.data) ? json.data : [])
         setActiveTrips(trips)
         if (trips.length > 0) {
           setSelectedTrip((prev) => {
@@ -138,7 +194,33 @@ export default function LiveTrips() {
     return () => clearInterval(interval)
   }, [token])
 
-  // Initialize and update map whenever selectedTrip changes
+  // Filtered trips list
+  const filteredTrips = useMemo(() => {
+    return activeTrips.filter((trip) => {
+      const q = searchQuery.toLowerCase().trim()
+      const matchesSearch =
+        !q ||
+        trip.tripId?.toLowerCase().includes(q) ||
+        trip.id?.toLowerCase().includes(q) ||
+        trip.customer?.name?.toLowerCase().includes(q) ||
+        trip.customer?.phone?.toLowerCase().includes(q) ||
+        trip.driver?.name?.toLowerCase().includes(q) ||
+        trip.pickup?.address?.toLowerCase().includes(q) ||
+        trip.dropoff?.address?.toLowerCase().includes(q)
+
+      if (!matchesSearch) return false
+
+      if (statusFilter === 'ALL') return true
+      const s = String(trip.status || trip.rawStatus || '').toUpperCase()
+      if (statusFilter === 'DISPATCHED') return s.includes('DISPATCH') || s.includes('DRIVER_ASSIGNED')
+      if (statusFilter === 'SEARCHING') return s.includes('SEARCH')
+      if (statusFilter === 'IN_PROGRESS') return s.includes('PROGRESS') || s.includes('STARTED')
+      if (statusFilter === 'SCHEDULED') return s.includes('SCHEDULE')
+      return true
+    })
+  }, [activeTrips, searchQuery, statusFilter])
+
+  // Google Map updater
   useEffect(() => {
     if (!selectedTrip || !mapContainerRef.current) return
 
@@ -165,36 +247,35 @@ export default function LiveTrips() {
           })
         }
 
-        // Clear existing markers & polylines
         markersRef.current.forEach((m) => m.setMap(null))
         markersRef.current = []
         if (polylineRef.current) polylineRef.current.setMap(null)
 
         const bounds = new maps.LatLngBounds()
 
-        // 1. Rapido/Uber Pickup Marker
+        // 1. Pickup Marker
         const pickupPos = { lat: pickupLat, lng: pickupLng }
         const pickupMarker = new maps.Marker({
           position: pickupPos,
           map: googleMapRef.current,
-          title: `Pickup Location: ${selectedTrip.pickup?.address || 'Pickup Point'}`,
-          icon: getUberPickupIcon(maps),
+          title: `Pickup: ${selectedTrip.pickup?.address || 'Pickup Point'}`,
+          icon: getUberPickupIcon(maps)
         })
         markersRef.current.push(pickupMarker)
         bounds.extend(pickupPos)
 
-        // 2. Rapido/Uber Dropoff Marker
+        // 2. Dropoff Marker
         const dropPos = { lat: dropLat, lng: dropLng }
         const dropMarker = new maps.Marker({
           position: dropPos,
           map: googleMapRef.current,
-          title: `Drop-off Destination: ${selectedTrip.dropoff?.address || 'Dropoff Point'}`,
-          icon: getUberDropoffIcon(maps),
+          title: `Dropoff: ${selectedTrip.dropoff?.address || 'Dropoff Point'}`,
+          icon: getUberDropoffIcon(maps)
         })
         markersRef.current.push(dropMarker)
         bounds.extend(dropPos)
 
-        // 3. Rapido/Uber Car Driver Marker
+        // 3. Driver Marker
         const driverLat = (pickupLat + dropLat) / 2
         const driverLng = (pickupLng + dropLng) / 2
         const driverPos = { lat: driverLat, lng: driverLng }
@@ -203,7 +284,7 @@ export default function LiveTrips() {
           position: driverPos,
           map: googleMapRef.current,
           title: `Driver: ${selectedTrip.driver?.name || 'Driver'}`,
-          icon: getUberCarIcon(maps),
+          icon: getUberCarIcon(maps)
         })
         markersRef.current.push(driverMarker)
 
@@ -214,7 +295,7 @@ export default function LiveTrips() {
           strokeColor: '#F59E0B',
           strokeOpacity: 0.85,
           strokeWeight: 5,
-          map: googleMapRef.current,
+          map: googleMapRef.current
         })
 
         googleMapRef.current.fitBounds(bounds)
@@ -226,22 +307,52 @@ export default function LiveTrips() {
     <PageLayout
       title="Live Trips"
       description="Monitor active and ongoing trips, driver locations, and booking status in real time."
-    >
-      <div className="flex justify-between items-center mb-4">
+      actions={
         <div className="flex items-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-xs font-semibold text-text-secondary">
-            {activeTrips.length} Active {activeTrips.length === 1 ? 'Trip' : 'Trips'} Running
-          </span>
+          <Button variant="secondary" icon={RefreshCw} onClick={fetchActiveTrips} disabled={loading}>
+            {loading ? 'Refreshing...' : 'Refresh'}
+          </Button>
         </div>
-        <button
-          onClick={fetchActiveTrips}
-          disabled={loading}
-          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-surface border border-border-subtle hover:bg-surface-hover text-text-primary transition-all disabled:opacity-50"
-        >
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          Refresh
-        </button>
+      }
+    >
+      {/* Search & Status Filters Bar */}
+      <div className="glass-card rounded-2xl p-4 mb-6 space-y-3">
+        <div className="flex flex-col md:flex-row gap-3 justify-between items-center">
+          {/* Search Input */}
+          <div className="relative w-full md:w-80">
+            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+            <input
+              type="text"
+              placeholder="Search by Trip ID, Customer, Driver..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-xl bg-surface border border-border-subtle pl-10 pr-4 py-2 text-xs text-text-primary placeholder:text-text-muted focus:border-taxi-500 focus:outline-none"
+            />
+          </div>
+
+          {/* Status Filters */}
+          <div className="flex gap-1.5 overflow-x-auto w-full md:w-auto pb-1 md:pb-0 scrollbar-none text-xs">
+            {[
+              { id: 'ALL', label: `All (${activeTrips.length})` },
+              { id: 'DISPATCHED', label: 'Dispatched' },
+              { id: 'IN_PROGRESS', label: 'In Progress' },
+              { id: 'SEARCHING', label: 'Searching Driver' },
+              { id: 'SCHEDULED', label: 'Scheduled' }
+            ].map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setStatusFilter(f.id)}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all whitespace-nowrap ${
+                  statusFilter === f.id
+                    ? 'bg-taxi-500 text-black shadow-sm'
+                    : 'bg-surface text-text-secondary hover:text-text-primary border border-border-subtle'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {errorMsg && (
@@ -252,59 +363,120 @@ export default function LiveTrips() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
         {/* Left Column: Active Trips Queue */}
         <div className="glass-card rounded-2xl p-6 space-y-4">
           <div className="flex justify-between items-center border-b border-border-subtle pb-2">
-            <h3 className="text-sm font-bold text-text-primary">Active Trips Queue</h3>
-            <span className="text-[10px] bg-taxi-500/10 text-taxi-500 px-2 py-0.5 rounded font-bold">
-              {activeTrips.length} Live
+            <h3 className="text-sm font-bold text-text-primary">
+              Active Trips Queue ({filteredTrips.length})
+            </h3>
+            <span className="text-[10px] bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded font-bold">
+              Live Fleet
             </span>
           </div>
 
           {loading && activeTrips.length === 0 ? (
-            <div className="py-12 text-center text-xs text-text-muted">
+            <div className="py-16 text-center text-xs text-text-muted">
               <RefreshCw size={24} className="animate-spin mx-auto mb-2 text-taxi-500" />
               Loading active company trips...
             </div>
-          ) : activeTrips.length === 0 ? (
-            <div className="py-12 text-center text-xs text-text-muted">
-              No active trips found. Creating one...
+          ) : filteredTrips.length === 0 ? (
+            <div className="py-16 text-center text-xs text-text-muted space-y-1">
+              <p className="font-semibold text-text-secondary">No active trips matching criteria.</p>
+              <p className="text-[11px]">New bookings will automatically appear here.</p>
             </div>
           ) : (
-            <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
-              {activeTrips.map((trip) => {
+            <div className="space-y-3 max-h-[640px] overflow-y-auto pr-1">
+              {filteredTrips.map((trip) => {
                 const isSelected = selectedTrip?.id === trip.id
+                const fareAmt = trip.fare?.displayFare
+                  ? String(trip.fare.displayFare).replace(/₹/g, '$')
+                  : `$${trip.fare?.amount || 0}`
+
                 return (
                   <div
                     key={trip.id}
                     onClick={() => setSelectedTrip(trip)}
-                    className={`p-4 rounded-xl border transition-all cursor-pointer ${
+                    className={`p-4 rounded-xl border transition-all cursor-pointer relative ${
                       isSelected
-                        ? 'bg-taxi-500/10 border-taxi-500 shadow-sm'
-                        : 'bg-surface border-border-subtle hover:bg-surface-hover'
+                        ? 'bg-taxi-500/10 border-taxi-500 shadow-md ring-1 ring-taxi-500/30'
+                        : 'bg-surface border-border-subtle hover:bg-surface-hover hover:border-border-strong'
                     }`}
                   >
+                    {/* Header: ID, Status, Fare */}
                     <div className="flex justify-between items-start gap-2">
-                      <div className="min-w-0 flex-1">
-                        <h4 className="text-sm font-bold text-text-primary flex items-center gap-1.5 overflow-hidden">
-                          <span className="shrink-0">{trip.tripId || trip.id}</span>
-                          <span className="text-text-muted font-normal shrink-0">•</span>
-                          <span className="text-xs text-text-secondary truncate max-w-[110px]">
-                            {trip.driver?.name || 'Assigned Driver'}
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-sm font-bold text-text-primary">{trip.tripId}</h4>
+                          <span className={`text-[10px] px-2 py-0.5 rounded border font-bold uppercase ${getStatusBadgeClass(trip.status || trip.rawStatus)}`}>
+                            {trip.status || trip.rawStatus || 'Active'}
                           </span>
-                        </h4>
-                        <p className="text-xs text-text-secondary mt-1 line-clamp-1">
-                          {trip.pickup?.address || 'Pickup'} → {trip.dropoff?.address || 'Dropoff'}
+                        </div>
+                        <p className="text-[11px] text-text-muted mt-0.5">
+                          {trip.createdAt ? formatDate(trip.createdAt) : ''}
                         </p>
                       </div>
-                      <span className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded font-bold whitespace-nowrap shrink-0 max-w-[110px] truncate text-center">
-                        {trip.status === 'SEARCHING_DRIVER' ? 'Searching Driver' : (trip.status ? String(trip.status).replace(/_/g, ' ') : '')}
-                      </span>
+
+                      <div className="text-right">
+                        <span className="text-sm font-bold text-taxi-500 block">{fareAmt}</span>
+                        <span className="text-[10px] text-text-muted uppercase font-mono">
+                          {trip.fare?.paymentMethod || 'CASH'}
+                        </span>
+                      </div>
                     </div>
 
-                    <div className="flex justify-between items-center mt-3 pt-2 border-t border-border-subtle/50 text-[11px] text-text-muted">
-                      <span>Customer: <strong className="text-text-primary">{trip.customer?.name}</strong></span>
-                      <span>Fare: <strong className="text-taxi-500">{trip.fare?.displayFare ? String(trip.fare.displayFare).replace(/₹/g, "$") : `${trip.fare?.amount || 0}`}</strong></span>
+                    {/* Route Details */}
+                    <div className="mt-3 space-y-1.5 text-xs">
+                      <div className="flex items-start gap-2 text-text-secondary">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 mt-1 shrink-0" />
+                        <span className="line-clamp-1">{trip.pickup?.address || 'Pickup Point'}</span>
+                      </div>
+                      <div className="flex items-start gap-2 text-text-secondary">
+                        <span className="w-2 h-2 rounded-full bg-rose-500 mt-1 shrink-0" />
+                        <span className="line-clamp-1">{trip.dropoff?.address || 'Destination'}</span>
+                      </div>
+                    </div>
+
+                    {/* People & Metrics */}
+                    <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-border-subtle/50 text-[11px]">
+                      <div className="flex items-center gap-1.5 text-text-secondary truncate max-w-[150px]">
+                        <User size={12} className="text-taxi-500 shrink-0" />
+                        <span className="truncate">{trip.customer?.name || 'Customer'}</span>
+                      </div>
+
+                      <div className="flex items-center gap-1 text-text-muted">
+                        <Car size={12} className="text-emerald-500 shrink-0" />
+                        <span className="truncate max-w-[120px] font-medium text-text-primary">
+                          {trip.driver?.name || 'Searching...'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Card Actions */}
+                    <div className="flex gap-2 mt-3 pt-2 border-t border-border-subtle/40">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setSelectedTrip(trip)
+                          setDetailsModalTrip(trip)
+                        }}
+                        className="flex-1 text-center py-1 rounded-lg bg-surface border border-border-subtle text-[11px] font-semibold text-text-primary hover:bg-taxi-500 hover:text-black transition-colors flex items-center justify-center gap-1"
+                      >
+                        <Eye size={12} /> Quick Details
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          navigate(`/dispatcher/trip-details?tripId=${trip.id}`)
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-surface border border-border-subtle text-[11px] font-semibold text-text-secondary hover:text-text-primary hover:border-taxi-500 transition-colors flex items-center gap-1"
+                        title="Open Full Page Details"
+                      >
+                        <ExternalLink size={12} />
+                      </button>
                     </div>
                   </div>
                 )
@@ -313,72 +485,350 @@ export default function LiveTrips() {
           )}
         </div>
 
-        {/* Right Column: Live Map + Overlay Details */}
-        <div className="lg:col-span-2 glass-card rounded-2xl p-6 space-y-4">
-          <div className="flex justify-between items-center border-b border-border-subtle pb-2">
-            <h3 className="text-sm font-bold text-text-primary">Real-time Location Map</h3>
-            {selectedTrip && (
-              <span className="text-xs text-text-secondary">
-                Tracking <strong>{selectedTrip.tripId || selectedTrip.id}</strong>
-              </span>
-            )}
-          </div>
-
-          <div className="relative w-full h-[380px] rounded-xl bg-slate-900 border border-border-strong overflow-hidden">
-            <div ref={mapContainerRef} className="w-full h-full" />
-
-            {/* Floating Map Indicators */}
-            {selectedTrip && (
-              <div className="absolute bottom-4 left-4 bg-ink/90 backdrop-blur-md px-3.5 py-2 rounded-xl border border-border-subtle text-[11px] text-text-secondary pointer-events-none shadow-lg">
-                <p className="font-semibold text-text-primary flex items-center gap-1.5">
-                  <Navigation size={13} className="text-taxi-500 animate-pulse" />
-                  Tracking {selectedTrip.tripId || selectedTrip.id}
-                </p>
-                <p className="text-[10px] text-text-muted mt-0.5">
-                  Driver: {selectedTrip.driver?.name || 'Assigned Driver'} • Vehicle: {selectedTrip.driver?.vehicleRegistrationNumber || selectedTrip.driver?.vehicleType || 'Standard'}
-                </p>
+        {/* Right 2 Columns: Live Map & Selected Trip Inspector */}
+        <div className="lg:col-span-2 space-y-6">
+          
+          {/* Google Map Card */}
+          <div className="glass-card rounded-2xl p-6 space-y-4">
+            <div className="flex justify-between items-center border-b border-border-subtle pb-2">
+              <div className="flex items-center gap-2">
+                <Navigation size={16} className="text-taxi-500 animate-pulse" />
+                <h3 className="text-sm font-bold text-text-primary">Live Route & Driver Tracking</h3>
               </div>
-            )}
+
+              {selectedTrip && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-text-secondary">
+                    Tracking <strong>{selectedTrip.tripId}</strong>
+                  </span>
+                  <button
+                    onClick={() => setDetailsModalTrip(selectedTrip)}
+                    className="text-xs text-taxi-500 hover:underline flex items-center gap-1 font-semibold"
+                  >
+                    Details <ExternalLink size={11} />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="relative w-full h-[380px] rounded-xl bg-slate-900 border border-border-strong overflow-hidden">
+              <div ref={mapContainerRef} className="w-full h-full" />
+
+              {/* Floating Tracking Card Overlay */}
+              {selectedTrip && (
+                <div className="absolute bottom-4 left-4 right-4 md:right-auto bg-slate-950/90 backdrop-blur-md px-4 py-3 rounded-xl border border-border-strong text-xs shadow-xl space-y-1">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-bold text-text-primary flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      {selectedTrip.tripId} • {selectedTrip.status || selectedTrip.rawStatus}
+                    </p>
+                    <span className="text-taxi-500 font-bold">
+                      ${selectedTrip.fare?.amount || selectedTrip.fare?.displayFare || 0}
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-text-muted">
+                    Driver: <strong className="text-text-primary">{selectedTrip.driver?.name || 'Searching...'}</strong>
+                    {selectedTrip.driver?.vehicleRegistrationNumber ? ` • ${selectedTrip.driver.vehicleRegistrationNumber}` : ''}
+                  </p>
+
+                  <div className="flex gap-3 text-[10px] text-text-secondary pt-1">
+                    <span>Distance: <strong>{selectedTrip.distanceKm || '—'} km</strong></span>
+                    <span>Duration: <strong>{selectedTrip.durationMinutes || '—'} mins</strong></span>
+                    <span>ETA: <strong className="text-emerald-500">~{selectedTrip.etaMinutes || selectedTrip.durationMinutes || 0} mins</strong></span>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Selected trip details summary */}
+          {/* Selected Trip Comprehensive Inspector */}
           {selectedTrip && (
-            <div className="bg-surface p-4 rounded-xl border border-border-subtle grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-              <div>
-                <span className="text-text-muted flex items-center gap-1"><User size={12} /> Driver</span>
-                <p className="font-bold text-text-primary mt-1 truncate">{selectedTrip.driver?.name || 'Searching...'}</p>
-                <p className="text-[10px] text-text-muted flex items-center gap-1 mt-0.5">
-                  <Phone size={10} /> {selectedTrip.driver?.phone || 'N/A'}
-                </p>
+            <div className="glass-card rounded-2xl p-6 space-y-4">
+              <div className="flex justify-between items-center border-b border-border-subtle pb-2">
+                <div>
+                  <h3 className="text-sm font-bold text-text-primary">
+                    Trip Overview: {selectedTrip.tripId}
+                  </h3>
+                  <p className="text-[11px] text-text-muted">ID: {selectedTrip.id}</p>
+                </div>
+
+                <Button
+                  size="xs"
+                  icon={ExternalLink}
+                  onClick={() => navigate(`/dispatcher/trip-details?tripId=${selectedTrip.id}`)}
+                >
+                  Open Dedicated Page
+                </Button>
               </div>
 
-              <div>
-                <span className="text-text-muted flex items-center gap-1"><User size={12} /> Customer</span>
-                <p className="font-bold text-text-primary mt-1 truncate">{selectedTrip.customer?.name || 'Guest'}</p>
-                <p className="text-[10px] text-text-muted flex items-center gap-1 mt-0.5">
-                  <Phone size={10} /> {selectedTrip.customer?.phone || 'N/A'}
-                </p>
+              {/* 4-Column Summary Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                
+                {/* Customer */}
+                <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-1">
+                  <span className="text-text-muted flex items-center gap-1">
+                    <User size={13} className="text-taxi-500" /> Customer
+                  </span>
+                  <p className="font-bold text-text-primary truncate">{selectedTrip.customer?.name || 'Customer'}</p>
+                  <p className="text-[11px] text-text-secondary flex items-center gap-1">
+                    <Phone size={10} /> {selectedTrip.customer?.phone || 'N/A'}
+                  </p>
+                </div>
+
+                {/* Driver */}
+                <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-1">
+                  <span className="text-text-muted flex items-center gap-1">
+                    <Car size={13} className="text-emerald-500" /> Driver
+                  </span>
+                  <p className="font-bold text-text-primary truncate">
+                    {selectedTrip.driver?.name || 'No Driver Assigned'}
+                  </p>
+                  <p className="text-[11px] text-text-secondary truncate">
+                    {selectedTrip.driver?.vehicleType || 'Standard'} {selectedTrip.driver?.vehicleRegistrationNumber ? `• ${selectedTrip.driver.vehicleRegistrationNumber}` : ''}
+                  </p>
+                </div>
+
+                {/* Distance & ETA */}
+                <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-1">
+                  <span className="text-text-muted flex items-center gap-1">
+                    <Clock size={13} className="text-purple-500" /> Metrics
+                  </span>
+                  <p className="font-bold text-text-primary">
+                    {selectedTrip.distanceKm || '0'} km • {selectedTrip.durationMinutes || '0'} min
+                  </p>
+                  <p className="text-[11px] text-emerald-500 font-semibold">
+                    ETA: ~{selectedTrip.etaMinutes || selectedTrip.durationMinutes || '—'} mins
+                  </p>
+                </div>
+
+                {/* Fare & Method */}
+                <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-1">
+                  <span className="text-text-muted flex items-center gap-1">
+                    <Receipt size={13} className="text-taxi-500" /> Fare & Method
+                  </span>
+                  <p className="font-bold text-taxi-500 text-sm">
+                    {selectedTrip.fare?.displayFare || `$${selectedTrip.fare?.amount || 0}`}
+                  </p>
+                  <p className="text-[10px] text-text-muted uppercase">
+                    {selectedTrip.fare?.paymentMethod || 'CASH'} • {selectedTrip.fare?.paymentStatus || 'PENDING'}
+                  </p>
+                </div>
+
               </div>
 
-              <div>
-                <span className="text-text-muted flex items-center gap-1"><Clock size={12} /> Distance & Duration</span>
-                <p className="font-bold text-text-primary mt-1">{selectedTrip.distanceKm || 12} km ({selectedTrip.durationMinutes || 25} mins)</p>
-                <p className="text-[10px] text-emerald-500 font-semibold mt-0.5">
-                  ETA ~{selectedTrip.etaMinutes || 8} min
-                </p>
-              </div>
+              {/* Pickup & Dropoff Banner */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 text-xs">
+                <div className="bg-surface p-3 rounded-xl border border-border-subtle flex items-start gap-2.5">
+                  <MapPin size={15} className="text-emerald-500 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-emerald-600">Pickup</span>
+                    <p className="text-text-primary font-medium mt-0.5 line-clamp-2">
+                      {selectedTrip.pickup?.address || 'Pickup Point'}
+                    </p>
+                  </div>
+                </div>
 
-              <div>
-                <span className="text-text-muted flex items-center gap-1"><Coins size={12} /> Fare & Payment</span>
-                <p className="font-bold text-taxi-500 mt-1">{selectedTrip.fare?.displayFare ? String(selectedTrip.fare.displayFare).replace(/₹/g, "$") : `${selectedTrip.fare?.amount || 0}`}</p>
-                <p className="text-[10px] text-text-muted uppercase mt-0.5">
-                  {selectedTrip.fare?.paymentMethod || 'CASH'} • {selectedTrip.fare?.paymentStatus || 'PENDING'}
-                </p>
+                <div className="bg-surface p-3 rounded-xl border border-border-subtle flex items-start gap-2.5">
+                  <Navigation size={15} className="text-rose-500 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-rose-500">Destination</span>
+                    <p className="text-text-primary font-medium mt-0.5 line-clamp-2">
+                      {selectedTrip.dropoff?.address || 'Dropoff Destination'}
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           )}
+
         </div>
+
       </div>
+
+      {/* FULL DETAILS MODAL */}
+      {detailsModalTrip && (
+        <Modal
+          open={!!detailsModalTrip}
+          onClose={() => setDetailsModalTrip(null)}
+          title={`Complete Trip Record: ${detailsModalTrip.tripId}`}
+          footer={
+            <div className="flex justify-between items-center w-full">
+              <span className="text-xs text-text-muted font-mono">
+                ID: {detailsModalTrip.id}
+              </span>
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={() => setDetailsModalTrip(null)}>
+                  Close
+                </Button>
+                <Button
+                  icon={ExternalLink}
+                  onClick={() => {
+                    const id = detailsModalTrip.id
+                    setDetailsModalTrip(null)
+                    navigate(`/dispatcher/trip-details?tripId=${id}`)
+                  }}
+                >
+                  Open Dedicated Page
+                </Button>
+              </div>
+            </div>
+          }
+        >
+          <div className="space-y-4 text-xs max-h-[70vh] overflow-y-auto pr-1">
+            
+            {/* Header info */}
+            <div className="bg-surface p-3.5 rounded-xl border border-border-subtle flex justify-between items-center">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-text-primary">{detailsModalTrip.tripId}</h3>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${getStatusBadgeClass(detailsModalTrip.status || detailsModalTrip.rawStatus)}`}>
+                    {detailsModalTrip.status || detailsModalTrip.rawStatus}
+                  </span>
+                </div>
+                <p className="text-text-muted text-[11px] mt-0.5">
+                  Company: <strong>{detailsModalTrip.company?.name || 'ABC Taxi'}</strong> ({detailsModalTrip.company?.code || 'CMP-003'})
+                </p>
+              </div>
+
+              <div className="text-right">
+                <span className="text-lg font-bold text-emerald-500">
+                  {detailsModalTrip.fare?.displayFare || `$${detailsModalTrip.fare?.amount || 0}`}
+                </span>
+                <span className="text-[10px] text-text-muted block uppercase">
+                  {detailsModalTrip.fare?.paymentMethod || 'CASH'} • {detailsModalTrip.fare?.paymentStatus || 'PENDING'}
+                </span>
+              </div>
+            </div>
+
+            {/* People: Customer & Driver */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              
+              {/* Customer Card */}
+              <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-2">
+                <span className="text-[10px] font-bold uppercase text-taxi-500 flex items-center gap-1">
+                  <User size={12} /> Passenger / Customer
+                </span>
+                <p className="text-sm font-bold text-text-primary">{detailsModalTrip.customer?.name || 'Customer'}</p>
+                {detailsModalTrip.customer?.phone && (
+                  <p className="text-text-secondary flex items-center gap-1.5">
+                    <Phone size={12} />
+                    <a href={`tel:${detailsModalTrip.customer.phone}`} className="hover:underline text-taxi-500">
+                      {detailsModalTrip.customer.phone}
+                    </a>
+                  </p>
+                )}
+                {detailsModalTrip.customer?.email && (
+                  <p className="text-text-muted flex items-center gap-1.5 text-[11px]">
+                    <Mail size={12} />
+                    <a href={`mailto:${detailsModalTrip.customer.email}`} className="hover:underline">
+                      {detailsModalTrip.customer.email}
+                    </a>
+                  </p>
+                )}
+                {detailsModalTrip.customer?.id && (
+                  <p className="text-[10px] text-text-muted font-mono pt-1">
+                    Customer ID: {detailsModalTrip.customer.id}
+                  </p>
+                )}
+              </div>
+
+              {/* Driver Card */}
+              <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-bold uppercase text-emerald-500 flex items-center gap-1">
+                    <Car size={12} /> Assigned Driver
+                  </span>
+                  {detailsModalTrip.driver?.rating && (
+                    <span className="text-amber-500 font-bold flex items-center gap-0.5 text-[11px]">
+                      <Star size={11} className="fill-amber-500" /> {detailsModalTrip.driver.rating}
+                    </span>
+                  )}
+                </div>
+
+                {detailsModalTrip.driver ? (
+                  <>
+                    <p className="text-sm font-bold text-text-primary">{detailsModalTrip.driver.name}</p>
+                    {detailsModalTrip.driver.phone && (
+                      <p className="text-text-secondary flex items-center gap-1.5">
+                        <Phone size={12} />
+                        <a href={`tel:${detailsModalTrip.driver.phone}`} className="hover:underline text-emerald-500">
+                          {detailsModalTrip.driver.phone}
+                        </a>
+                      </p>
+                    )}
+                    <p className="text-[11px] text-text-muted">
+                      Vehicle: <strong className="text-text-primary">{detailsModalTrip.driver.vehicleType || 'Standard'}</strong>
+                      {detailsModalTrip.driver.vehicleRegistrationNumber ? ` • ${detailsModalTrip.driver.vehicleRegistrationNumber}` : ''}
+                    </p>
+                    {detailsModalTrip.driver.id && (
+                      <p className="text-[10px] text-text-muted font-mono">
+                        Driver ID: {detailsModalTrip.driver.id}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-text-muted py-2">No driver assigned yet.</p>
+                )}
+              </div>
+
+            </div>
+
+            {/* Route & Locations */}
+            <div className="bg-surface p-3.5 rounded-xl border border-border-subtle space-y-3">
+              <span className="text-[10px] font-bold uppercase text-text-secondary flex items-center gap-1">
+                <Route size={12} /> Route & Coordinates
+              </span>
+
+              <div className="space-y-2">
+                <div>
+                  <span className="text-[10px] text-emerald-600 font-bold block uppercase">Pickup Address:</span>
+                  <p className="text-text-primary font-medium">{detailsModalTrip.pickup?.address || 'Pickup Point'}</p>
+                  {detailsModalTrip.pickup?.latitude && (
+                    <p className="text-[10px] text-text-muted font-mono mt-0.5">
+                      Lat: {detailsModalTrip.pickup.latitude}, Lng: {detailsModalTrip.pickup.longitude}
+                    </p>
+                  )}
+                </div>
+
+                <div className="pt-2 border-t border-border-subtle/50">
+                  <span className="text-[10px] text-rose-500 font-bold block uppercase">Dropoff Destination:</span>
+                  <p className="text-text-primary font-medium">{detailsModalTrip.dropoff?.address || 'Destination'}</p>
+                  {detailsModalTrip.dropoff?.latitude && (
+                    <p className="text-[10px] text-text-muted font-mono mt-0.5">
+                      Lat: {detailsModalTrip.dropoff.latitude}, Lng: {detailsModalTrip.dropoff.longitude}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Trip Metrics & Timestamps */}
+            <div className="bg-surface p-3.5 rounded-xl border border-border-subtle grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+              <div>
+                <span className="text-[10px] text-text-muted block">Distance</span>
+                <p className="font-bold text-text-primary mt-0.5">{detailsModalTrip.distanceKm || '—'} km</p>
+              </div>
+              <div>
+                <span className="text-[10px] text-text-muted block">Duration</span>
+                <p className="font-bold text-text-primary mt-0.5">{detailsModalTrip.durationMinutes || '—'} mins</p>
+              </div>
+              <div>
+                <span className="text-[10px] text-text-muted block">ETA</span>
+                <p className="font-bold text-emerald-500 mt-0.5">~{detailsModalTrip.etaMinutes || '—'} mins</p>
+              </div>
+              <div>
+                <span className="text-[10px] text-text-muted block">Scheduled</span>
+                <p className="font-bold text-text-primary mt-0.5">
+                  {detailsModalTrip.scheduledAt ? formatDate(detailsModalTrip.scheduledAt) : 'Immediate'}
+                </p>
+              </div>
+            </div>
+
+          </div>
+        </Modal>
+      )}
+
     </PageLayout>
   )
 }

@@ -1,5 +1,4 @@
 import LoginForm from '../components/LoginForm'
-import logo from '@/assets/logo.webp'
 
 export default function Login() {
   return (

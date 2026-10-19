@@ -5,4 +5,6 @@ export const TRIP_STATUS = {
   scheduled: { label: 'Scheduled', tone: 'indigo' },
   completed: { label: 'Completed', tone: 'green' },
   cancelled: { label: 'Cancelled', tone: 'red' },
+  request_sent: { label: 'Request Sent', tone: 'amber' },
+  REQUEST_SENT: { label: 'Request Sent', tone: 'amber' },
 }

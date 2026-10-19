@@ -1,6 +1,18 @@
-import { useState, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search as SearchIcon, Eye, ShieldAlert, CheckCircle, Award, FileCheck } from 'lucide-react'
+import {
+  Plus,
+  Search as SearchIcon,
+  Eye,
+  ShieldAlert,
+  CheckCircle,
+  Award,
+  FileCheck,
+  RefreshCw,
+  Car,
+  XCircle,
+  AlertTriangle
+} from 'lucide-react'
 import PageLayout from '@/layouts/PageLayout'
 import StatusBadge from '@/shared/components/StatusBadge'
 import Button from '@/shared/components/Button'
@@ -8,112 +20,255 @@ import Input from '@/shared/components/Input'
 import Select from '@/shared/components/Select'
 import Table from '@/shared/components/Table'
 import Pagination from '@/shared/components/Pagination'
-import { usePagination } from '@/shared/hooks/usePagination'
-
-const INITIAL_DRIVERS = [
-  { id: 'DRV-101', name: 'Mike Johnson', company: 'ABC Taxi', vehicle: 'Toyota Camry (ABC-123)', status: 'Active', availability: 'On Duty', documents: 'Valid', rating: '4.9', trips: 124, earnings: '$1,240.00' },
-  { id: 'DRV-102', name: 'Sarah Lee', company: 'XYZ Cabs', vehicle: 'Hyundai Sonata (XYZ-998)', status: 'Active', availability: 'Break', documents: 'Expiring Soon', rating: '4.8', trips: 98, earnings: '$880.00' },
-  { id: 'DRV-103', name: 'Alex Kumar', company: 'ABC Taxi', vehicle: 'Honda Accord (ACC-441)', status: 'Suspended', availability: 'Unavailable', documents: 'Expired', rating: '4.2', trips: 54, earnings: '$410.00' },
-  { id: 'DRV-104', name: 'Rahul Singh', company: 'City Ride', vehicle: 'Nissan Altima (NSS-882)', status: 'Active', availability: 'Available', documents: 'Valid', rating: '4.7', trips: 110, earnings: '$1,020.00' },
-  { id: 'DRV-105', name: 'Neha Gupta', company: 'XYZ Cabs', vehicle: 'Ford Fusion (FRD-330)', status: 'Inactive', availability: 'Offline', documents: 'Pending Verification', rating: '4.5', trips: 32, earnings: '$280.00' }
-]
+import Loading from '@/shared/components/Loading'
+import RejectDriverModal from '../../components/RejectDriverModal'
+import AssignVehicleTypeModal from '../../components/AssignVehicleTypeModal'
+import {
+  listCompanyDrivers,
+  updateDriverStatus,
+  listVehicleTypes,
+  DRIVER_STATUS_OPTIONS,
+  DRIVER_STATUS_ENUM
+} from '../../services/driverManagerApi'
 
 export default function DriverList() {
   const navigate = useNavigate()
-  const [drivers, setDrivers] = useState(INITIAL_DRIVERS)
+
+  // State
+  const [drivers, setDrivers] = useState([])
+  const [totalDrivers, setTotalDrivers] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+  const [page, setPage] = useState(1)
+  const [limit] = useState(10)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [actionError, setActionError] = useState(null)
+  const [actionSuccess, setActionSuccess] = useState(null)
+
+  // Filters
   const [searchQuery, setSearchQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [availFilter, setAvailFilter] = useState('all')
-  const [docFilter, setDocFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('All')
+  const [vehicleTypeFilter, setVehicleTypeFilter] = useState('all')
+  const [vehicleTypesList, setVehicleTypesList] = useState([])
 
-  const filteredDrivers = useMemo(() => {
-    return drivers.filter(d => {
-      const matchesSearch = 
-        d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        d.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        d.vehicle.toLowerCase().includes(searchQuery.toLowerCase())
+  // Modals state
+  const [selectedDriverForVehicle, setSelectedDriverForVehicle] = useState(null)
+  const [selectedDriverForReject, setSelectedDriverForReject] = useState(null)
+  const [actionLoadingId, setActionLoadingId] = useState(null)
 
-      const matchesStatus = statusFilter === 'all' || d.status.toLowerCase() === statusFilter.toLowerCase()
-      const matchesAvail = availFilter === 'all' || d.availability.toLowerCase() === availFilter.toLowerCase()
-      const matchesDoc = docFilter === 'all' || d.documents.toLowerCase() === docFilter.toLowerCase()
-
-      return matchesSearch && matchesStatus && matchesAvail && matchesDoc
-    })
-  }, [drivers, searchQuery, statusFilter, availFilter, docFilter])
-
-  const { page, setPage, totalPages, pageItems } = usePagination(filteredDrivers, 5)
-
-  const toggleStatus = (id) => {
-    setDrivers(prev => prev.map(d => {
-      if (d.id === id) {
-        return { ...d, status: d.status === 'Active' ? 'Suspended' : 'Active' }
+  // Load vehicle types for filter
+  useEffect(() => {
+    async function loadTypes() {
+      try {
+        const types = await listVehicleTypes()
+        setVehicleTypesList(types)
+      } catch (err) {
+        // Fallback silently if vehicle types fail to load
       }
-      return d
-    }))
+    }
+    loadTypes()
+  }, [])
+
+  // Fetch Drivers
+  const fetchDrivers = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    setActionError(null)
+    try {
+      const res = await listCompanyDrivers({
+        page,
+        limit,
+        search: searchQuery.trim() || undefined,
+        status: statusFilter,
+        vehicleType: vehicleTypeFilter !== 'all' ? vehicleTypeFilter : undefined,
+      })
+      setDrivers(res.drivers || [])
+      setTotalDrivers(res.total || 0)
+      setTotalPages(res.totalPages || 1)
+    } catch (err) {
+      setError(err.message || 'Failed to load company drivers.')
+      setDrivers([])
+    } finally {
+      setLoading(false)
+    }
+  }, [page, limit, searchQuery, statusFilter, vehicleTypeFilter])
+
+  useEffect(() => {
+    fetchDrivers()
+  }, [fetchDrivers])
+
+  // Handle Quick Status Toggle (Approve / Activate / Suspend)
+  const handleToggleStatus = async (driver) => {
+    setActionLoadingId(driver.id)
+    setActionError(null)
+    setActionSuccess(null)
+    try {
+      const nextStatus =
+        driver.status === DRIVER_STATUS_ENUM.ACTIVE
+          ? DRIVER_STATUS_ENUM.INACTIVE
+          : DRIVER_STATUS_ENUM.ACTIVE
+
+      await updateDriverStatus({
+        driverId: driver.id,
+        status: nextStatus,
+      })
+
+      setActionSuccess(`Driver ${driver.name} is now ${nextStatus === 'ACTIVE' ? 'Active' : 'Suspended'}.`)
+      fetchDrivers()
+    } catch (err) {
+      setActionError(err.message || 'Failed to update driver status.')
+    } finally {
+      setActionLoadingId(null)
+    }
+  }
+
+  // Handle Reject Driver with Reason
+  const handleConfirmReject = async (reason) => {
+    if (!selectedDriverForReject) return
+    setActionError(null)
+    setActionSuccess(null)
+    try {
+      await updateDriverStatus({
+        driverId: selectedDriverForReject.id,
+        status: DRIVER_STATUS_ENUM.REJECTED,
+        rejectionReason: reason,
+      })
+      setActionSuccess(`Driver ${selectedDriverForReject.name} was rejected.`)
+      fetchDrivers()
+    } catch (err) {
+      throw err
+    }
   }
 
   const columns = [
-    { key: 'id', label: 'ID', render: (r) => <span className="font-semibold text-text-primary">{r.id}</span> },
-    { key: 'name', label: 'Driver', render: (r) => <span className="font-bold text-text-primary">{r.name}</span> },
-    { key: 'vehicle', label: 'Vehicle' },
-    { key: 'status', label: 'Status', render: (r) => <StatusBadge status={r.status.toLowerCase()} /> },
-    { key: 'availability', label: 'Availability', render: (r) => (
-      <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${
-        r.availability === 'On Duty' ? 'bg-emerald-500/10 text-emerald-600 ring-emerald-500/20' :
-        r.availability === 'Available' ? 'bg-taxi-500/10 text-taxi-500 ring-taxi-500/20' :
-        r.availability === 'Break' ? 'bg-amber-500/10 text-amber-600 ring-amber-500/20' :
-        'bg-slate-500/10 text-text-muted ring-slate-500/20'
-      }`}>
-        {r.availability}
-      </span>
-    )},
-    { key: 'documents', label: 'Documents', render: (r) => (
-      <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${
-        r.documents === 'Valid' ? 'bg-emerald-500/10 text-emerald-600 ring-emerald-500/20' :
-        r.documents === 'Expiring Soon' ? 'bg-amber-500/10 text-amber-600 ring-amber-500/20' :
-        r.documents === 'Expired' ? 'bg-red-500/10 text-signal-red ring-red-500/20' :
-        'bg-purple-500/10 text-signal-purple ring-purple-500/20'
-      }`}>
-        {r.documents}
-      </span>
-    )},
-    { key: 'rating', label: 'Rating', render: (r) => <span className="flex items-center gap-1 font-semibold text-text-primary"><Award size={13} className="text-amber-500" /> {r.rating}</span> },
-    { key: 'trips', label: 'Trips' },
-    { key: 'earnings', label: 'Earnings', render: (r) => <span className="font-bold text-taxi-500">{r.earnings}</span> },
+    {
+      key: 'id',
+      label: 'ID',
+      render: (r) => (
+        <span className="font-semibold text-text-primary font-mono text-xs">
+          {r.id.length > 8 ? `${r.id.slice(0, 8)}...` : r.id}
+        </span>
+      ),
+    },
+    {
+      key: 'name',
+      label: 'Driver',
+      render: (r) => (
+        <div className="flex items-center gap-2.5">
+          {r.avatar ? (
+            <img src={r.avatar} alt={r.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
+          ) : (
+            <div className="w-8 h-8 rounded-full bg-taxi-500/10 text-taxi-500 flex items-center justify-center font-bold text-xs shrink-0">
+              {r.name?.charAt(0) || 'D'}
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="font-bold text-text-primary truncate">{r.name}</p>
+            <p className="text-[11px] text-text-muted truncate">{r.phone || r.email || 'No contact'}</p>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'vehicleType',
+      label: 'Vehicle Class',
+      render: (r) => (
+        <div className="flex items-center gap-1.5">
+          <span className="inline-flex items-center gap-1 rounded-md bg-taxi-500/10 text-taxi-600 px-2 py-0.5 text-xs font-semibold">
+            <Car size={12} />
+            {r.vehicleType || 'Unassigned'}
+          </span>
+          <button
+            onClick={() => setSelectedDriverForVehicle(r)}
+            title="Assign / Change Vehicle Type (PATCH /driver/vehicle-type)"
+            className="p-1 text-text-muted hover:text-taxi-500 rounded transition-colors"
+          >
+            <Plus size={13} />
+          </button>
+        </div>
+      ),
+    },
+    {
+      key: 'vehicle',
+      label: 'Plate / Model',
+      render: (r) => (
+        <div>
+          <span className="font-semibold text-text-primary text-xs block">{r.plate || '-'}</span>
+          <span className="text-[11px] text-text-muted">{r.modelAndYear || r.make || '-'}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      render: (r) => <StatusBadge status={r.statusSlug || 'inactive'} />,
+    },
+    {
+      key: 'rating',
+      label: 'Rating',
+      render: (r) => (
+        <span className="flex items-center gap-1 font-semibold text-text-primary text-xs">
+          <Award size={13} className="text-amber-500" /> {r.rating || '5.0'}
+        </span>
+      ),
+    },
     {
       key: 'actions',
       label: 'Actions',
-      render: (r) => (
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => navigate(`/driver-manager/driver-list/${r.id}`)}
-            title="View Profile Details"
-            className="p-1 text-text-secondary hover:text-taxi-500 hover:bg-surface-hover rounded transition-colors"
-          >
-            <Eye size={16} />
-          </button>
-          <button
-            onClick={() => toggleStatus(r.id)}
-            title={r.status === 'Active' ? 'Suspend Driver' : 'Activate Driver'}
-            className={`p-1 rounded transition-colors ${
-              r.status === 'Active' 
-                ? 'text-red-500 hover:text-red-700 hover:bg-red-500/10' 
-                : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-500/10'
-            }`}
-          >
-            {r.status === 'Active' ? <ShieldAlert size={16} /> : <CheckCircle size={16} />}
-          </button>
-        </div>
-      )
-    }
+      render: (r) => {
+        const isActive = r.status === DRIVER_STATUS_ENUM.ACTIVE
+        const isBusy = actionLoadingId === r.id
+
+        return (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => navigate(`/driver-manager/driver-list/${r.id}`)}
+              title="View Driver Dossier & Details"
+              className="p-1.5 text-text-secondary hover:text-taxi-500 hover:bg-surface-hover rounded-lg transition-colors"
+            >
+              <Eye size={15} />
+            </button>
+            <button
+              onClick={() => setSelectedDriverForVehicle(r)}
+              title="Assign Vehicle Type (PATCH /driver/vehicle-type)"
+              className="p-1.5 text-text-secondary hover:text-taxi-500 hover:bg-surface-hover rounded-lg transition-colors"
+            >
+              <Car size={15} />
+            </button>
+            <button
+              onClick={() => handleToggleStatus(r)}
+              disabled={isBusy}
+              title={isActive ? 'Suspend / Deactivate Driver' : 'Activate Driver'}
+              className={`p-1.5 rounded-lg transition-colors ${
+                isActive
+                  ? 'text-red-500 hover:text-red-700 hover:bg-red-500/10'
+                  : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-500/10'
+              }`}
+            >
+              {isActive ? <ShieldAlert size={15} /> : <CheckCircle size={15} />}
+            </button>
+            <button
+              onClick={() => setSelectedDriverForReject(r)}
+              title="Reject Driver with Reason"
+              className="p-1.5 text-text-muted hover:text-red-600 hover:bg-red-500/10 rounded-lg transition-colors"
+            >
+              <XCircle size={15} />
+            </button>
+          </div>
+        )
+      },
+    },
   ]
 
   return (
     <PageLayout
       title="Driver Management"
-      description="Manage registered drivers, monitor statuses, verify documentation, and coordinate onboarding applications."
+      description="Manage registered drivers, update statuses (Approve, Reject, Suspend), and assign vehicle types."
       actions={
         <div className="flex gap-2">
+          <Button variant="secondary" icon={RefreshCw} onClick={fetchDrivers} disabled={loading}>
+            Refresh
+          </Button>
           <Button variant="secondary" icon={FileCheck} onClick={() => navigate('/driver-manager/driver-list/applications')}>
             Applications Queue
           </Button>
@@ -123,56 +278,59 @@ export default function DriverList() {
         </div>
       }
     >
+      {/* Action alerts */}
+      {actionError && (
+        <div className="flex items-start gap-2 rounded-xl border border-signal-red/20 bg-signal-red/5 p-3.5 mb-4 text-xs text-signal-red">
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          <span>{actionError}</span>
+        </div>
+      )}
+
+      {actionSuccess && (
+        <div className="flex items-start gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3.5 mb-4 text-xs text-emerald-600">
+          <CheckCircle size={15} className="mt-0.5 shrink-0" />
+          <span>{actionSuccess}</span>
+        </div>
+      )}
+
       {/* Filtering Header Card */}
       <div className="flex flex-wrap md:flex-nowrap md:items-end gap-3 glass-card p-4 rounded-2xl mb-4">
         <div className="flex-1 min-w-[200px]">
           <Input
-            placeholder="Search drivers by name, ID, vehicle..."
+            placeholder="Search by name, email, phone, license, plate..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value)
+              setPage(1)
+            }}
             icon={SearchIcon}
             containerClassName="w-full"
           />
         </div>
 
-        <div className="w-full md:w-32">
+        <div className="w-full md:w-44">
           <Select
-            label="Status"
+            label="Driver Status"
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            options={[
-              { value: 'all', label: 'All Statuses' },
-              { value: 'active', label: 'Active' },
-              { value: 'inactive', label: 'Inactive' },
-              { value: 'suspended', label: 'Suspended' }
-            ]}
+            onChange={(e) => {
+              setStatusFilter(e.target.value)
+              setPage(1)
+            }}
+            options={DRIVER_STATUS_OPTIONS}
           />
         </div>
-        <div className="w-full md:w-36">
+
+        <div className="w-full md:w-48">
           <Select
-            label="Availability"
-            value={availFilter}
-            onChange={(e) => setAvailFilter(e.target.value)}
+            label="Vehicle Class"
+            value={vehicleTypeFilter}
+            onChange={(e) => {
+              setVehicleTypeFilter(e.target.value)
+              setPage(1)
+            }}
             options={[
-              { value: 'all', label: 'All Availability' },
-              { value: 'on duty', label: 'On Duty' },
-              { value: 'available', label: 'Available' },
-              { value: 'break', label: 'Break' },
-              { value: 'offline', label: 'Offline' }
-            ]}
-          />
-        </div>
-        <div className="w-full md:w-36">
-          <Select
-            label="Documents"
-            value={docFilter}
-            onChange={(e) => setDocFilter(e.target.value)}
-            options={[
-              { value: 'all', label: 'All Documents' },
-              { value: 'valid', label: 'Valid' },
-              { value: 'expiring soon', label: 'Expiring Soon' },
-              { value: 'expired', label: 'Expired' },
-              { value: 'pending verification', label: 'Pending' }
+              { value: 'all', label: 'All Vehicle Classes' },
+              ...vehicleTypesList.map((t) => ({ value: t.name, label: t.name })),
             ]}
           />
         </div>
@@ -180,11 +338,58 @@ export default function DriverList() {
 
       {/* Driver List Table */}
       <div className="glass-card rounded-2xl overflow-hidden">
-        <Table borderless columns={columns} rows={pageItems} keyField="id" emptyLabel="No drivers found" />
-        <div className="p-4 border-t border-border-subtle">
-          <Pagination page={page} totalPages={totalPages} onChange={setPage} />
-        </div>
+        {loading ? (
+          <div className="p-8">
+            <Loading label="Loading company drivers..." />
+          </div>
+        ) : error ? (
+          <div className="p-8 text-center">
+            <AlertTriangle size={32} className="mx-auto text-signal-red mb-2" />
+            <p className="text-sm font-semibold text-text-primary mb-1">{error}</p>
+            <Button size="sm" variant="secondary" onClick={fetchDrivers} className="mt-3">
+              Try Again
+            </Button>
+          </div>
+        ) : (
+          <>
+            <Table
+              borderless
+              columns={columns}
+              rows={drivers}
+              keyField="id"
+              emptyLabel={
+                searchQuery || statusFilter !== 'All' || vehicleTypeFilter !== 'all'
+                  ? 'No drivers matching current filters'
+                  : 'No registered company drivers found'
+              }
+            />
+            <div className="p-4 border-t border-border-subtle flex flex-col sm:flex-row items-center justify-between gap-3">
+              <span className="text-xs text-text-muted">
+                Showing {drivers.length} of {totalDrivers} drivers
+              </span>
+              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+            </div>
+          </>
+        )}
       </div>
+
+      {/* Assign Vehicle Type Modal */}
+      <AssignVehicleTypeModal
+        open={Boolean(selectedDriverForVehicle)}
+        driver={selectedDriverForVehicle}
+        onClose={() => setSelectedDriverForVehicle(null)}
+        onSuccess={() => {
+          fetchDrivers()
+        }}
+      />
+
+      {/* Reject Driver Modal */}
+      <RejectDriverModal
+        open={Boolean(selectedDriverForReject)}
+        driver={selectedDriverForReject}
+        onClose={() => setSelectedDriverForReject(null)}
+        onConfirm={handleConfirmReject}
+      />
     </PageLayout>
   )
 }
